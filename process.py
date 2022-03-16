@@ -35,13 +35,13 @@ def generate(spectrum, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=SAVE_FREQ):
     for i in range(len(fn) - 1):
         ampl = spectrum[:,i]
         spec = np.fft.fft(ampl)
-        subset = spec_all[int(fn[i]) : int(fn[i+1])]
+        subset = spec_all[int(fn[i]/np.sqrt(fstep)): int(fn[i]*np.sqrt(fstep))]
         center = len(subset)//2
         end = min(len(subset), center + (n_save//2))
         start = max(0, center - (n_save//2))
         subset[center:end] = spec[:end-center]
         subset[start:center] = spec[-(center-start):]
-        spec_all[int(fn[i]) : int(fn[i+1])] = subset
+        spec_all[int(fn[i]/np.sqrt(fstep)) : int(fn[i]*np.sqrt(fstep))] = subset
     spec_all[1:] += np.conj(spec_all)[1:][::-1]
     track = np.fft.ifft(spec_all)
     track = np.real(track)

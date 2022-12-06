@@ -3,8 +3,8 @@ import numpy as np
 import notes
 
 FREQ_STEP = np.power(2, 1/12 / 1)
-MIN_FREQ = notes.NOTES["C1"]
-SAVE_FREQ = 100
+MIN_FREQ = notes.NOTES["C2"]
+SAVE_FREQ = 500
 
 
 def log_spectrum(x, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=SAVE_FREQ):

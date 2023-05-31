@@ -3,8 +3,8 @@ import numpy as np
 import notes
 
 FREQ_STEP = np.power(2, 1/12 / 1)
-MIN_FREQ = notes.NOTES["C2"]
-SAVE_FREQ = 500
+MIN_FREQ = notes.NOTES["C1"]
+SAVE_FREQ = 100
 
 
 def log_spectrum(x, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=SAVE_FREQ):
@@ -14,9 +14,17 @@ def log_spectrum(x, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=SAVE_FREQ):
     fn = len(x) / fs * fmin * np.power(fstep, np.arange(0, nmax + 1))
     log_spec = []
     for i in range(len(fn)):
-        subset = spec_all[int(fn[i]/np.sqrt(fstep)): int(fn[i]*np.sqrt(fstep))]
+        center = len(spec_all) // 2
+        subset = np.roll(spec_all, center - int(fn[i]))
+        window = np.arange(len(subset)) - center
+        window = window / (fn[i] * (fstep - 1) / 2) * np.pi
+        where = window == 0
+        not_where = window != 0
+        window[not_where] = np.sin(window[not_where]) / window[not_where]
+        window[where] = 1
+        subset = subset * window
+
         spec = np.zeros((n_save,), dtype=np.complex128)
-        center = len(subset)//2
         end = min(len(subset), center + (n_save//2))
         start = max(0, center - (n_save//2))
         spec[:end-center] = subset[center:end]

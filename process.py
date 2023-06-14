@@ -7,6 +7,32 @@ MIN_FREQ = notes.NOTES["C1"]
 SAVE_FREQ = 100
 
 
+def get_window(n_save, win_size):
+    window = (np.arange(n_save) + n_save // 2) % n_save - n_save // 2
+    window = window / (win_size / 2)
+    window = np.sinc(window)
+    return window
+
+
+def get_subset(spec_all, fn, fstep, n_save):
+    win_size = fn * (fstep - 1)
+    spec = get_window(n_save, win_size)
+    spec = np.complex64(spec)
+    
+    fni = int(fn)
+    idx_from = np.arange(fni, fni + n_save)
+    idx_from -= n_save // 2
+    idx_from %= spec_all.shape[-1]
+
+    idx_to = np.arange(0, n_save)
+    idx_to -= n_save // 2
+    idx_to %= n_save
+
+    spec[idx_to] *= spec_all[idx_from]
+
+    return spec
+
+
 def log_spectrum(x, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=SAVE_FREQ):
     n_save = int(len(x) * fsave / fs)
     spec_all = np.fft.fft(x)
@@ -14,21 +40,7 @@ def log_spectrum(x, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=SAVE_FREQ):
     fn = len(x) / fs * fmin * np.power(fstep, np.arange(0, nmax + 1))
     log_spec = []
     for i in range(len(fn)):
-        center = len(spec_all) // 2
-        subset = np.roll(spec_all, center - int(fn[i]))
-        window = np.arange(len(subset)) - center
-        window = window / (fn[i] * (fstep - 1) / 2) * np.pi
-        where = window == 0
-        not_where = window != 0
-        window[not_where] = np.sin(window[not_where]) / window[not_where]
-        window[where] = 1
-        subset = subset * window
-
-        spec = np.zeros((n_save,), dtype=np.complex128)
-        end = min(len(subset), center + (n_save//2))
-        start = max(0, center - (n_save//2))
-        spec[:end-center] = subset[center:end]
-        spec[-(center-start):] = subset[start:center]
+        spec = get_subset(spec_all, fn[i], fstep, n_save)
         ampl = np.fft.ifft(spec)
         log_spec.append(ampl)
     log_spec = np.stack(log_spec, axis=-1)

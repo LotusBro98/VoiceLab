@@ -9,8 +9,7 @@ SAVE_FREQ = 100
 
 def get_window(n_save, win_size):
     window = (np.arange(n_save) + n_save // 2) % n_save - n_save // 2
-    window = window / (win_size / 2)
-    window = np.sinc(window)
+    window = np.exp(-np.square(window / win_size))
     return window
 
 

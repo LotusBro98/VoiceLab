@@ -59,11 +59,12 @@ def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=
     ax.xaxis.grid(True, which='minor', color=GRID_COLOR, linestyle="--", alpha=0.3)
     ax.xaxis.grid(True, which='major', color=GRID_COLOR, linewidth=2, alpha=0.5)
 
+    ax.set_yticks([])
     ax.set_yticks(list(notes_inside.values()), minor=True)
     ax.set_yticklabels(list(notes_inside.keys()), minor=True)
 
     ax.yaxis.grid(True, which='minor', color=GRID_COLOR, linestyle="--", alpha=0.3)
 
-    ax.imshow(spectrum.T[::-1], aspect=aspect, interpolation='nearest')
+    ax.imshow(spectrum.T[::-1], aspect=aspect, cmap='hot')
 
     plt.show()

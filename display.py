@@ -3,7 +3,7 @@ from matplotlib import pyplot as plt
 import cv2 as cv
 
 import notes
-from process import MIN_FREQ, FREQ_STEP, SAVE_FREQ, FREQ_RES, MAX_FREQ
+from process import MIN_FREQ, FREQ_STEP, SAVE_FREQ, FREQ_RES, MAX_FREQ, freq_to_sample
 
 BPM = 112
 FOURTHS_IN_BEAT = 4
@@ -18,8 +18,8 @@ TIME_STEP_MINOR = BEAT_TIME * MINOR_TICK_BEAT
 TIME_RES = TIME_STEP_MINOR / 8
 FREQ_RES_WINDOW_TIME = TIME_RES * 2
 
-PLOT_RES_TIME = 1/3
-PLOT_RES_NOTE = 1/7
+PLOT_RES_TIME = 1
+PLOT_RES_NOTE = 1/10
 GRID_COLOR = 'gray'
 
 HALF_NOTE = np.power(2, 1/12/2)
@@ -32,8 +32,15 @@ def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=
     dt = 1 / fsave
     max_time = time_start + spectrum.shape[0] * dt
 
-    notes_inside = dict([(note, spectrum.shape[-1]-1 - np.log(notes.NOTES[note] / fmin) / np.log(fstep)) for note in notes.NOTES.keys() if
-                         notes.NOTES[note] >= MIN_FREQ and notes.NOTES[note] <= fs])
+    notes_inside = {
+        note:
+        notes.NOTES[note]
+    for note in notes.NOTES.keys() if notes.NOTES[note] >= fmin and notes.NOTES[note] <= MAX_FREQ}
+
+    notes_inside = dict(zip(
+        notes_inside.keys(),
+        spectrum.shape[-1]-1 - freq_to_sample(list(notes_inside.values()), fmin, MAX_FREQ)
+    ))
 
     n_notes = len(notes_inside)
 
@@ -51,11 +58,11 @@ def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=
 
     # ax.set_ylim((list(notes_inside.values())[0], list(notes_inside.values())[-1]))
     ax.set_ylim(
-        spectrum.shape[-1]-1 - np.log(fmin / fmin) / np.log(fstep), 
-        spectrum.shape[-1]-1 - np.log(MAX_FREQ / fmin) / np.log(fstep), 
+        spectrum.shape[-1]-1 - freq_to_sample(fmin, fmin, MAX_FREQ),
+        spectrum.shape[-1]-1 - freq_to_sample(MAX_FREQ, fmin, MAX_FREQ),
     )
 
-    aspect1 = ((max_time - time_start) / dt) / ((np.log(fs) - np.log(fmin)) / np.log(fstep))
+    aspect1 = ((max_time - time_start) / dt) / spectrum.shape[-1]
     aspect = aspect1 * im_size_y / im_size_x
 
     xticks_major = np.arange(time_start, max_time, TIME_STEP_MAJOR) / dt

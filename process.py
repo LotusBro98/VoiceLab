@@ -6,47 +6,19 @@ from scipy.special import erfinv
 
 SAVE_FREQ = 1000
 FREQ_STEP = 2 ** (1/12)
-FREQ_RES = 5
-MIN_FREQ = 10
+FREQ_RES = 10
+MIN_FREQ = 0
 MAX_FREQ = 11000
 
 
 def get_window(n_save, win_size):
-    # win_size = win_size.clip(None, n_save)
-
-    # window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
-    # window = window / (win_size / 2)
-    # window = torch.sinc(window)
-
-    # window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
-    # window = window / (n_save / (win_size / 2))
-    # window = torch.cos(np.pi / 2 * window.clip(-1, 1)).square()
-    # window = torch.fft.fft(window).real
-
-    # window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
-    # window = window / (win_size / 2)
-    # window = torch.cos(np.pi / 2 * window.clip(-1, 1)).square()
-
-    # if win_size > n_save:
-    #     window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
-    #     window = window / (n_save / 2)
-    #     window = torch.cos(window * np.pi / 2).square()
-    #     window = (window * n_save + win_size - n_save) / (win_size)
-    # else:
-    #     window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
-    #     window = window / (n_save / (win_size / 2))
-    #     window = torch.cos(np.pi / 2 * window.clip(-1, 1)).square()
-    #     window = torch.fft.fft(window).real
-    #     # window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
-    #     # prob_outside = 1e-6
-    #     # std = (win_size / 2) / erfinv(1 - prob_outside)
-    #     # window = torch.exp(-0.5 * torch.square(window / std))
-
     window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
     prob_outside = 1e-2
     std = (win_size / 2) / erfinv(1 - prob_outside)
     window = torch.exp(-0.5 * torch.square(window / std))
     # window -= window.min()
+
+    # window *= np.clip(win_size / n_save, 1, None)
 
     # f = torch.fft.fft(window).real
     # plt.plot(window / window.max())
@@ -75,20 +47,43 @@ def get_subset(spec_all, fn, win_size, n_save):
     return spec
 
 
-def get_mel_scale(fmin, fmax, n_feats):
-    def mel_to_freq(mel):
-        if not isinstance(mel, torch.Tensor):
-            mel = torch.tensor(mel)
-        return 700 * (torch.exp(mel / 1127) - 1)
+def mel_to_freq(mel):
+    if not isinstance(mel, torch.Tensor):
+        mel = torch.tensor(mel)
+    return 700 * (torch.exp(mel / 1127) - 1)
 
-    def freq_to_mel(freq):
-        if not isinstance(freq, torch.Tensor):
-            freq = torch.tensor(freq)
-        return 1127 * torch.log(1 + freq / 700)
+def freq_to_mel(freq):
+    if not isinstance(freq, torch.Tensor):
+        freq = torch.tensor(freq)
+    return 1127 * torch.log(1 + freq / 700)
 
+
+def freq_to_sample(freq, fmin, fmax, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
     mel_min = freq_to_mel(fmin)
     mel_max = freq_to_mel(fmax)
-    mels = torch.linspace(mel_min, mel_max, n_feats + 2)
+    mel_x = freq_to_mel(freq)
+
+    if n_feats is None:
+        mel_mid = (mel_min + mel_max) / 2
+        freq_mid = mel_to_freq(mel_mid)
+        dmel = mel_mid - freq_to_mel(freq_mid / fstep)
+        n_feats = int((mel_max - mel_min) / dmel) * superres
+
+    fn = (mel_x - mel_min) / (mel_max - mel_min) * n_feats
+    return fn
+
+
+def get_mel_scale(fmin, fmax, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
+    mel_min = freq_to_mel(fmin)
+    mel_max = freq_to_mel(fmax)
+
+    if n_feats is None:
+        mel_mid = (mel_min + mel_max) / 2
+        freq_mid = mel_to_freq(mel_mid)
+        dmel = mel_mid - freq_to_mel(freq_mid / fstep)
+        n_feats = int((mel_max - mel_min) / dmel) * superres
+
+    mels = torch.linspace(mel_min, mel_max, n_feats)
     freqs = mel_to_freq(mels)
 
     return freqs
@@ -104,6 +99,11 @@ def get_log_scale(fmin, fmax, fstep, superres=1):
     return freqs
 
 
+def get_dfreq(freq_scale, superres=1):
+    dfreq = freq_scale[2:] - freq_scale[:-2]
+    np.gradient(freq_scale)
+
+
 def log_spectrum(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
     if not isinstance(x, torch.Tensor):
         x = torch.tensor(x)
@@ -113,12 +113,12 @@ def log_spectrum(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
     n_save = int(x_len * fsave / sample_rate)
     spec_all = torch.fft.fft(x, dim=-1)
     spec_all_freq_res = sample_rate / spec_all.shape[-1]
-    fn = get_log_scale(fmin, fmax, FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
+    fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
+    df = np.gradient(fn) * FREQ_RES
 
     log_spec = []
     for i in range(len(fn)):
-        dfreq = fn[i] * (FREQ_STEP - 1)
-        spec = get_subset(spec_all, fn[i], dfreq, n_save)
+        spec = get_subset(spec_all, fn[i], df[i], n_save)
         ampl = torch.fft.ifft(spec, dim=-1)
         log_spec.append(ampl)
     log_spec = torch.stack(log_spec, dim=-1)

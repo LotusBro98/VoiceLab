@@ -57,20 +57,37 @@ def freq_to_mel(freq):
         freq = torch.tensor(freq)
     return 1127 * torch.log(1 + freq / 700)
 
+def get_mel_n_feats(mel_min, mel_max, fstep, superres):
+    mel_mid = (mel_min + mel_max) / 2
+    freq_mid = mel_to_freq(mel_mid)
+    dmel = mel_mid - freq_to_mel(freq_mid / fstep)
+    n_feats = int((mel_max - mel_min) / dmel) * superres
 
-def freq_to_sample(freq, fmin, fmax, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
+    return n_feats
+
+def freq_to_sample(freq, fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
     mel_min = freq_to_mel(fmin)
     mel_max = freq_to_mel(fmax)
     mel_x = freq_to_mel(freq)
 
     if n_feats is None:
-        mel_mid = (mel_min + mel_max) / 2
-        freq_mid = mel_to_freq(mel_mid)
-        dmel = mel_mid - freq_to_mel(freq_mid / fstep)
-        n_feats = int((mel_max - mel_min) / dmel) * superres
+        n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
 
     fn = (mel_x - mel_min) / (mel_max - mel_min) * n_feats
     return fn
+
+
+def sample_to_freq(fn, fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
+    mel_min = freq_to_mel(fmin)
+    mel_max = freq_to_mel(fmax)
+
+    if n_feats is None:
+        n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
+
+    mel_x = fn / n_feats * (mel_max - mel_min) + mel_min
+    freq = mel_to_freq(mel_x)
+
+    return freq
 
 
 def get_mel_scale(fmin, fmax, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
@@ -78,10 +95,7 @@ def get_mel_scale(fmin, fmax, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
     mel_max = freq_to_mel(fmax)
 
     if n_feats is None:
-        mel_mid = (mel_min + mel_max) / 2
-        freq_mid = mel_to_freq(mel_mid)
-        dmel = mel_mid - freq_to_mel(freq_mid / fstep)
-        n_feats = int((mel_max - mel_min) / dmel) * superres
+        n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
 
     mels = torch.linspace(mel_min, mel_max, n_feats)
     freqs = mel_to_freq(mels)

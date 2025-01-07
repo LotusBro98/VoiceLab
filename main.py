@@ -1,10 +1,12 @@
 import librosa
 from scipy.io.wavfile import write
 import numpy as np
+import matplotlib.pyplot as plt
 
 import notes
 from display import render_plot
 from process import generate, log_spectrum
+from decompose import extract_voice
 
 # SOURCE = "data/Detektivbyrn_-_Om_Du_Mter_Varg_63265005.mp3"
 # SOURCE = "data/kukla_kolduna.mp3"
@@ -20,8 +22,10 @@ track0 = track
 
 spectrum = log_spectrum(track, sample_rate)
 
-render_plot(np.abs(spectrum), 0, sample_rate)
+pred = extract_voice(spectrum)
 
-track2 = generate(spectrum, sample_rate)
+render_plot(np.abs(pred), 0, sample_rate)
+
+track2 = generate(pred, sample_rate)
 write("track.wav", sample_rate, (track2*2**31).astype(np.int32))
 write("orig.wav", sample_rate, (track*2**31).astype(np.int32))

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from scipy.special import erfinv
 
-SAVE_FREQ = 1000
+SAVE_FREQ = 200
 FREQ_STEP = 2 ** (1/12)
 FREQ_RES = 10
 MIN_FREQ = 0
@@ -143,18 +143,22 @@ def set_subset(spec_all, fn, win_size, n_save, spec, weights):
     return spec
 
 
-def generate(spectrum, fs, fsave=SAVE_FREQ):
-    n_all = int(len(spectrum) * fs / fsave)
+def generate(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
+    n_all = int(len(spectrum) * sample_rate / fsave)
     n_save = spectrum.shape[0]
+
+    spec_all_freq_res = sample_rate / n_all
+
+    fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
+    df = np.gradient(fn) * FREQ_RES
+
     spec_all = np.zeros((n_all,), dtype=np.complex128)
-    spec_all_freq_res = fs / spec_all.shape[-1]
-    n_feats = spectrum.shape[-1]
     weights_all = np.zeros((n_all,), dtype=np.complex128)
-    fn = get_mel_scale(fsave, fs / 2, n_feats) / spec_all_freq_res
-    for i in range(len(fn) - 2):
+    
+    for i in range(len(fn)):
         ampl = spectrum[:,i]
         spec = np.fft.fft(ampl)
-        set_subset(spec_all, fn[i+1], (fn[i+2] - fn[i]), n_save, spec, weights_all)
+        set_subset(spec_all, fn[i], df[i], n_save, spec, weights_all)
     spec_all[len(spec_all) // 2:] = 0
     spec_all /= weights_all.clip(weights_all.max() / 5, None)
     spec_all[1:] += np.conj(spec_all)[1:][::-1]

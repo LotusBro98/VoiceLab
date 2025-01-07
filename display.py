@@ -73,14 +73,8 @@ def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=
 
     ax.yaxis.grid(True, which='minor', color=GRID_COLOR, linestyle="--", alpha=0.3)
 
-    colormap = np.ones((1, spectrum.shape[1], 3), dtype=np.float32)
-    colormap[:, :, 0] = np.linspace(0, 300, colormap.shape[1])
-    colormap[:, :, 1] = 1
-    colormap[:, :, 2] = 1
-    colormap = cv.cvtColor(colormap, cv.COLOR_HSV2RGB)
-
-    spec_display = spectrum[..., None]
-    # spec_display = spec_display / np.max(np.abs(spec_display))
+    spec_display = np.abs(spectrum)
+    spec_display = spec_display / (3 * np.std(spec_display))
     # spec_display = np.log(spec_display.clip(1e-4, None))
     # spec_display -= np.mean(spec_display)
     # spec_display /= 3 * np.std(spec_display)
@@ -88,7 +82,14 @@ def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=
     # spec_display = spec_display * 0.5 + 0.5
     # print(spec_display)
     # spec_display
-    spec_display = spec_display * colormap
+
+    spec_display = np.stack([
+        np.linspace(0, 300, spectrum.shape[1])[None, :].repeat(spectrum.shape[0], axis=0),
+        np.exp(np.clip(1 - spec_display, None, 0)),
+        np.clip(spec_display, 0, 1)
+    ], axis=-1)
+    spec_display = cv.cvtColor(spec_display.astype(np.float32), cv.COLOR_HSV2RGB)
+
     ax.imshow(spec_display.transpose(1, 0, 2)[::-1], aspect=aspect)
 
     plt.savefig("plot.png")

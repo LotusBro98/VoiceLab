@@ -1,13 +1,18 @@
+import math
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from scipy.special import erfinv
 
-SAVE_FREQ = 100
+SAVE_FREQ = 1000
+FREQ_STEP = 2 ** (1/12)
+FREQ_RES = 5
+MIN_FREQ = 10
+MAX_FREQ = 11000
 
 
 def get_window(n_save, win_size):
-    win_size = win_size.clip(None, n_save)
+    # win_size = win_size.clip(None, n_save)
 
     # window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
     # window = window / (win_size / 2)
@@ -41,7 +46,7 @@ def get_window(n_save, win_size):
     prob_outside = 1e-2
     std = (win_size / 2) / erfinv(1 - prob_outside)
     window = torch.exp(-0.5 * torch.square(window / std))
-    window -= window.min()
+    # window -= window.min()
 
     # f = torch.fft.fft(window).real
     # plt.plot(window / window.max())
@@ -89,14 +94,31 @@ def get_mel_scale(fmin, fmax, n_feats):
     return freqs
 
 
-def log_spectrum(x, fs, fsave=SAVE_FREQ, n_feats=80):
-    n_save = int(x.shape[-1] * fsave / fs)
+def get_log_scale(fmin, fmax, fstep, superres=1):
+    log_min = np.log(fmin)
+    log_max = np.log(fmax)
+    log_step = np.log(fstep) / superres
+
+    logs = np.arange(log_min, log_max, log_step)
+    freqs = np.exp(logs)
+    return freqs
+
+
+def log_spectrum(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
+    if not isinstance(x, torch.Tensor):
+        x = torch.tensor(x)
+
+    x_len = x.shape[-1]
+
+    n_save = int(x_len * fsave / sample_rate)
     spec_all = torch.fft.fft(x, dim=-1)
-    spec_all_freq_res = fs / spec_all.shape[-1]
-    fn = get_mel_scale(fsave, fs / 2, n_feats) / spec_all_freq_res
+    spec_all_freq_res = sample_rate / spec_all.shape[-1]
+    fn = get_log_scale(fmin, fmax, FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
+
     log_spec = []
-    for i in range(len(fn) - 2):
-        spec = get_subset(spec_all, fn[i+1], (fn[i+2] - fn[i]), n_save)
+    for i in range(len(fn)):
+        dfreq = fn[i] * (FREQ_STEP - 1)
+        spec = get_subset(spec_all, fn[i], dfreq, n_save)
         ampl = torch.fft.ifft(spec, dim=-1)
         log_spec.append(ampl)
     log_spec = torch.stack(log_spec, dim=-1)

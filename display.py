@@ -1,6 +1,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import cv2 as cv
+import torch
 
 import notes
 from process import MIN_FREQ, FREQ_STEP, SAVE_FREQ, FREQ_RES, MAX_FREQ, freq_to_sample
@@ -23,6 +24,18 @@ PLOT_RES_NOTE = 1/10
 GRID_COLOR = 'gray'
 
 HALF_NOTE = np.power(2, 1/12/2)
+
+
+def complex_picture(spectrum: torch.Tensor):
+    image = torch.stack([
+        (spectrum.angle() + torch.pi).rad2deg(),
+        torch.ones_like(spectrum.abs()),
+        spectrum.abs()
+    ], dim=-1).float().numpy()
+
+    image = cv.cvtColor(image, cv.COLOR_HSV2RGB)
+
+    return image
 
 
 def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=SAVE_FREQ):

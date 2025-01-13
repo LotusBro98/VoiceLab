@@ -5,6 +5,7 @@ import numpy as np
 import notes
 from display import render_plot
 from process import generate, log_spectrum
+from decompose import extract_voice
 
 # SOURCE = "data/Detektivbyrn_-_Om_Du_Mter_Varg_63265005.mp3"
 # SOURCE = "data/kukla_kolduna.mp3"
@@ -19,6 +20,8 @@ track = track[int(TIME_START*sample_rate): int((TIME_START+TIME_WINDOW)*sample_r
 track0 = track
 
 spectrum = log_spectrum(track, sample_rate)
+
+extract_voice(spectrum)
 
 render_plot(np.abs(spectrum), 0, sample_rate)
 

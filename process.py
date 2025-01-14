@@ -113,12 +113,28 @@ def get_log_scale(fmin, fmax, fstep, superres=1):
     return freqs
 
 
-def get_dfreq(freq_scale, superres=1):
-    dfreq = freq_scale[2:] - freq_scale[:-2]
-    np.gradient(freq_scale)
+def to_freq_diff_repr(spectrum) -> torch.Tensor:
+    df = spectrum.angle() - spectrum.roll(1, -2).angle()
+    df[0, :] = spectrum.angle()[0, :]
+
+    spectrum = (
+        spectrum.abs() *
+        torch.exp(1j * df)
+    )
+
+    return spectrum
 
 
-def log_spectrum(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
+def from_freq_diff_repr(spectrum) -> torch.Tensor:
+    spectrum = (
+        spectrum.abs() *
+        torch.exp(1j * (spectrum.angle().cumsum(-2)))
+    )
+
+    return spectrum
+
+
+def build_spectrogram(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
     if not isinstance(x, torch.Tensor):
         x = torch.tensor(x)
 
@@ -128,7 +144,7 @@ def log_spectrum(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
     spec_all = torch.fft.fft(x, dim=-1)
     spec_all_freq_res = sample_rate / spec_all.shape[-1]
     fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
-    df = np.gradient(fn) * FREQ_RES
+    df = torch.gradient(fn)[0] * FREQ_RES
 
     log_spec = []
     for i in range(len(fn)):
@@ -136,6 +152,9 @@ def log_spectrum(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
         ampl = torch.fft.ifft(spec, dim=-1)
         log_spec.append(ampl)
     log_spec = torch.stack(log_spec, dim=-1)
+
+    log_spec = to_freq_diff_repr(log_spec)
+
     return log_spec
 
 
@@ -157,7 +176,7 @@ def set_subset(spec_all, fn, win_size, n_save, spec, weights):
     return spec
 
 
-def generate(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
+def generate_sound(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
     n_all = int(len(spectrum) * sample_rate / fsave)
     n_save = spectrum.shape[0]
 
@@ -165,6 +184,8 @@ def generate(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FRE
 
     fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
     df = np.gradient(fn) * FREQ_RES
+
+    spectrum = from_freq_diff_repr(spectrum)
 
     spec_all = np.zeros((n_all,), dtype=np.complex128)
     weights_all = np.zeros((n_all,), dtype=np.complex128)

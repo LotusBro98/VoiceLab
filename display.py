@@ -95,6 +95,7 @@ def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=
 
     spec_display = np.abs(spectrum)
     spec_display = spec_display / (3 * np.std(spec_display))
+    # spec_display = spec_display / np.max(spec_display)
     # spec_display = np.log(spec_display.clip(1e-4, None))
     # spec_display -= np.mean(spec_display)
     # spec_display /= 3 * np.std(spec_display)

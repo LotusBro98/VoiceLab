@@ -8,16 +8,7 @@ import cv2 as cv
 from scipy.special import erfinv
 
 from display import complex_picture
-from process import sample_to_freq, freq_to_sample, get_window, FREQ_RES
-
-
-def to_freq_diff_repr(spectrum) -> torch.Tensor:
-    spectrum = (
-        spectrum.abs() *
-        torch.exp(1j * (spectrum.angle() - spectrum.roll(-1, -2).angle()))
-    )
-
-    return spectrum
+from process import sample_to_freq, freq_to_sample, get_window, to_freq_diff_repr, FREQ_RES
 
 
 def get_sample_scale_window(n_freqs, fni):

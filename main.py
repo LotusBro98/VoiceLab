@@ -4,7 +4,7 @@ import numpy as np
 
 import notes
 from display import render_plot
-from process import generate, log_spectrum
+from process import build_spectrogram, generate_sound
 from decompose import extract_voice
 
 # SOURCE = "data/Detektivbyrn_-_Om_Du_Mter_Varg_63265005.mp3"
@@ -19,12 +19,10 @@ track, sample_rate = librosa.load(SOURCE)
 track = track[int(TIME_START*sample_rate): int((TIME_START+TIME_WINDOW)*sample_rate)]
 track0 = track
 
-spectrum = log_spectrum(track, sample_rate)
-
-extract_voice(spectrum)
+spectrum = build_spectrogram(track, sample_rate)
 
 render_plot(np.abs(spectrum), 0, sample_rate)
 
-track2 = generate(spectrum, sample_rate)
+track2 = generate_sound(spectrum, sample_rate)
 write("track.wav", sample_rate, (track2*2**31).astype(np.int32))
 write("orig.wav", sample_rate, (track*2**31).astype(np.int32))

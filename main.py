@@ -1,9 +1,10 @@
 import librosa
 from scipy.io.wavfile import write
 import numpy as np
+import matplotlib.pyplot as plt
 
 import notes
-from display import render_plot
+from display import render_plot, complex_picture
 from process import build_spectrogram, generate_sound
 from decompose import extract_voice
 
@@ -20,6 +21,8 @@ track = track[int(TIME_START*sample_rate): int((TIME_START+TIME_WINDOW)*sample_r
 track0 = track
 
 spectrum = build_spectrogram(track, sample_rate)
+
+print(spectrum.shape)
 
 render_plot(np.abs(spectrum), 0, sample_rate)
 

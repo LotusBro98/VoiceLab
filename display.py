@@ -29,7 +29,7 @@ HALF_NOTE = np.power(2, 1/12/2)
 def complex_picture(spectrum: torch.Tensor):
     image = torch.stack([
         (spectrum.angle() + torch.pi).rad2deg(),
-        torch.ones_like(spectrum.abs()),
+        (1 - spectrum.abs()).clip(None, 0).exp(),
         spectrum.abs()
     ], dim=-1).float().numpy()
 

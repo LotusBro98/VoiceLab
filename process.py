@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from scipy.special import erfinv
 
-SAVE_FREQ = 100
+SAVE_FREQ = 128
 FREQ_STEP = 2 ** (1/12)
 FREQ_RES = 2
 MIN_FREQ = 0
@@ -63,6 +63,13 @@ def get_mel_n_feats(mel_min, mel_max, fstep, superres):
     dmel = mel_mid - freq_to_mel(freq_mid / fstep)
     n_feats = int((mel_max - mel_min) / dmel) * superres
 
+    return n_feats
+
+def get_n_freqs(fmin=MIN_FREQ, fmax=MAX_FREQ, fstep=FREQ_STEP, superres=FREQ_RES):
+    mel_min = freq_to_mel(fmin)
+    mel_max = freq_to_mel(fmax)
+
+    n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
     return n_feats
 
 def freq_to_sample(freq, fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):

@@ -2,3 +2,5 @@
 plot.png
 orig.wav
 track.wav
+lightning_logs
+*.DS_Store

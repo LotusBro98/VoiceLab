@@ -4,9 +4,9 @@ import numpy as np
 import torch
 from scipy.special import erfinv
 
-SAVE_FREQ = 128
+SAVE_FREQ = 200
 FREQ_STEP = 2 ** (1/12)
-FREQ_RES = 2
+FREQ_RES = 5
 MIN_FREQ = 0
 MAX_FREQ = 11000
 

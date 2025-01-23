@@ -23,6 +23,9 @@ track0 = track
 spectrum = build_spectrogram(track, sample_rate)
 
 print(spectrum.shape)
+plt.imshow(complex_picture(spectrum))
+plt.savefig("complex_pic.png")
+plt.close()
 
 render_plot(np.abs(spectrum), 0, sample_rate)
 

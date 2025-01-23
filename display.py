@@ -27,10 +27,15 @@ HALF_NOTE = np.power(2, 1/12/2)
 
 
 def complex_picture(spectrum: torch.Tensor):
+    ampl = spectrum.abs()
+    ampl /= ampl.std() * 3
+
+    phase = spectrum.angle()
+
     image = torch.stack([
-        (spectrum.angle() + torch.pi).rad2deg(),
-        (1 - spectrum.abs()).clip(None, 0).exp(),
-        spectrum.abs()
+        (phase + torch.pi).rad2deg(),
+        (1 - ampl).clip(None, 0).exp(),
+        ampl * 255 / 256
     ], dim=-1).float().numpy()
 
     image = cv.cvtColor(image, cv.COLOR_HSV2RGB)
@@ -114,4 +119,4 @@ def render_plot(spectrum, time_start, fs, fstep=FREQ_STEP, fmin=MIN_FREQ, fsave=
     ax.imshow(spec_display.transpose(1, 0, 2)[::-1], aspect=aspect)
 
     plt.savefig("plot.png")
-    # plt.show()
+    plt.close()

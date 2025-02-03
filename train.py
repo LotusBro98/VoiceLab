@@ -25,9 +25,10 @@ def main():
 
     autoencoder = Autoencoder(dataset.get_n_freqs())
 
+    torch.set_float32_matmul_precision('medium')
     trainer = pl.Trainer(
         # limit_train_batches=100, 
-        max_epochs=20,
+        max_epochs=50,
         # accelerator="cpu"
         devices=1
     )
@@ -36,7 +37,7 @@ def main():
 
     autoencoder.eval()
 
-    spec, sample_rate = dataset[20]
+    chunk, spec, sample_rate = dataset[20]
 
     with torch.no_grad():
         spec_pred = autoencoder(spec[None, :])[0]

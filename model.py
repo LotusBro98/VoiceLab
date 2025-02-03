@@ -88,7 +88,7 @@ class Encoder(nn.Module):
     def __init__(self, n_freqs: int):
         super().__init__()
 
-        self.in_conv = nn.Conv1d(2 * n_freqs, 1024, kernel_size=1, bias=False)
+        self.in_conv = nn.Conv1d(2 * n_freqs, 1024, kernel_size=1, bias=True)
 
         self.test = nn.Parameter(torch.zeros(3 * n_freqs, 1))
 
@@ -111,19 +111,11 @@ class Encoder(nn.Module):
     def forward(self, spectrogram: torch.Tensor):
         spectrogram = spectrogram.transpose(-1, -2)
 
-        # spectrogram = torch.log(spectrogram)
-        # x = torch.concat([
-        #     spectrogram.abs().log(),
-        #     spectrogram.real / spectrogram.abs(),
-        #     spectrogram.imag / spectrogram.abs(),
-        # ], dim=1)
-
         x = torch.concat([
             spectrogram.real,
             spectrogram.imag
         ], dim=1)
 
-        # x = x + self.test
         x = self.in_conv(x)
 
         # for block in self.blocks:
@@ -153,29 +145,14 @@ class Decoder(nn.Module):
         ])
 
         self.out_conv = nn.Conv1d(1024, 2 * n_freqs, bias=True, kernel_size=1)
-        # self.out_norm = nn.BatchNorm1d(2 * n_freqs)
 
     def forward(self, x: torch.Tensor):
         # for block in self.blocks:
         #     x = block(x)
         x = self.out_conv(x)
-        # x = self.out_norm(x)
-        
-        
-        # spec_abs, spec_x, spec_y = x.chunk(3, dim=1)
-        # spectrogram = spec_abs.exp() * torch.complex(
-        #     spec_x / (spec_x.square() + spec_y.square()).sqrt(), 
-        #     spec_y / (spec_x.square() + spec_y.square()).sqrt()
-        # )
 
         spec_real, spec_imag = x.chunk(2, dim=1)
         spectrogram = torch.complex(spec_real, spec_imag)
-        # spectrogram = torch.exp(spectrogram)
-
-        # spectrogram = (
-        #     spec_real *
-        #     torch.exp(1j * spec_imag)
-        # )
 
         spectrogram = spectrogram.transpose(-1, -2)
 
@@ -195,27 +172,19 @@ class Autoencoder(pl.LightningModule):
 
         return reconstructed_spec
     
-    def training_step(self, batch, batch_idx):
-        spec, sr = batch
+    def training_step(self, batch: torch.Tensor, batch_idx):
+        chunk, spec, sr = batch
 
-        feats = self.encoder(spec)
-        pred_spec = self.decoder(feats)
+        feats: torch.Tensor = self.encoder(spec)
+        pred_spec: torch.Tensor = self.decoder(feats)
 
-        # loss = (pred_spec - spec).abs().square().mean().sqrt() / spec.std()
-
-        loss = ((pred_spec - spec).abs() / spec.abs().clip(1e-6, None)).mean()
-
-        # eps = 1e-6
-        # loss = 0
-        # loss += F.mse_loss((eps + pred_spec.abs()).log(), (eps + spec.abs()).log()) / (eps + spec.abs()).log().std()
-        # loss += ((
-        #     pred_spec / pred_spec.abs().clip(1e-4, None) - 
-        #     spec / spec.abs().clip(1e-4, None)
-        # ).abs().square() * spec.abs().square()).mean().sqrt() / spec.abs().square().mean().sqrt()
+        loss = (pred_spec - spec).abs().square().mean().sqrt() / spec.std()
         
         self.log("train_loss", loss, prog_bar=True)
+        self.log("lr", self.lr_schedulers().get_last_lr()[0], prog_bar=True)
         return loss
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
+        scheduler = optim.lr_scheduler.ExponentialLR(optimizer, 0.9)
+        return [optimizer], [scheduler]

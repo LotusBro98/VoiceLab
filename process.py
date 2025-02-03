@@ -10,15 +10,16 @@ FREQ_RES = 5
 MIN_FREQ = 0
 MAX_FREQ = 11000
 
+HEAR_SENSE_THRESHOLD = 1e-4
 
-def get_window(n_save, win_size):
-    window = (torch.arange(n_save) + n_save // 2) % n_save - n_save // 2
+
+def get_window(n_save, win_size, shift=0):
+    window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
     prob_outside = 1e-2
     std = (win_size / 2) / erfinv(1 - prob_outside)
     window = torch.exp(-0.5 * torch.square(window / std))
-    # window -= window.min()
-
-    # window *= np.clip(win_size / n_save, 1, None)
+    window -= window.min()
+    window /= window.max()
 
     # f = torch.fft.fft(window).real
     # plt.plot(window / window.max())
@@ -97,7 +98,7 @@ def sample_to_freq(fn, fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_ST
     return freq
 
 
-def get_mel_scale(fmin, fmax, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
+def get_mel_scale(fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
     mel_min = freq_to_mel(fmin)
     mel_max = freq_to_mel(fmax)
 
@@ -120,22 +121,60 @@ def get_log_scale(fmin, fmax, fstep, superres=1):
     return freqs
 
 
-def to_freq_diff_repr(spectrum) -> torch.Tensor:
-    df = spectrum.angle() - spectrum.roll(1, -2).angle()
-    df[0, :] = spectrum.angle()[0, :]
+def to_freq_diff_repr(spectrum: torch.Tensor) -> torch.Tensor:
+    df = spectrum.angle()
+
+    df = df.diff(1, -2, prepend=torch.zeros_like(df[..., :1, :]))
+    # df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :, :1]))
+    df = torch.atan2(df.sin(), df.cos())
+    # df[0, :] = 0
+
+    ampl = spectrum.abs()
 
     spectrum = (
-        spectrum.abs() *
+        ampl *
         torch.exp(1j * df)
     )
 
     return spectrum
 
 
-def from_freq_diff_repr(spectrum) -> torch.Tensor:
+def from_freq_diff_repr(spectrum: torch.Tensor) -> torch.Tensor:
+    df = spectrum.angle()
+
+    # df[0, :] = 0
+    # df = df.cumsum(-1)
+    df = df.cumsum(-2)
+
+    ampl = spectrum.abs()
+
     spectrum = (
-        spectrum.abs() *
-        torch.exp(1j * (spectrum.angle().cumsum(-2)))
+        ampl *
+        torch.exp(1j * df)
+    )
+
+    return spectrum
+
+
+def to_bel_scale(spectrum) -> torch.Tensor:
+    ampl = spectrum.abs()
+    ampl = torch.log10(1 + ampl / HEAR_SENSE_THRESHOLD)
+
+    spectrum = (
+        ampl *
+        torch.exp(1j * spectrum.angle())
+    )
+
+    return spectrum
+
+
+def from_bel_scale(spectrum) -> torch.Tensor:
+    ampl = spectrum.abs()
+    ampl = HEAR_SENSE_THRESHOLD * (torch.pow(10, ampl) - 1)
+
+    spectrum = (
+        ampl *
+        torch.exp(1j * spectrum.angle())
     )
 
     return spectrum
@@ -161,6 +200,7 @@ def build_spectrogram(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_F
     log_spec = torch.stack(log_spec, dim=-1)
 
     log_spec = to_freq_diff_repr(log_spec)
+    log_spec = to_bel_scale(log_spec)
 
     return log_spec
 
@@ -192,6 +232,7 @@ def generate_sound(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=M
     fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
     df = np.gradient(fn) * FREQ_RES
 
+    spectrum = from_bel_scale(spectrum)
     spectrum = from_freq_diff_repr(spectrum)
 
     spec_all = np.zeros((n_all,), dtype=np.complex128)

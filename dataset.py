@@ -27,7 +27,7 @@ class AudioDataset(Dataset):
 
         spec = build_spectrogram(chunk, sample_rate)
 
-        return spec, sample_rate
+        return chunk, spec, sample_rate
 
     def __len__(self):
         return len(self.chunks)

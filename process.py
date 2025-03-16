@@ -6,9 +6,10 @@ from scipy.special import erfinv
 
 SAVE_FREQ = 200
 FREQ_STEP = 2 ** (1/12)
-FREQ_RES = 5
+FREQ_RES = 2
 MIN_FREQ = 0
 MAX_FREQ = 11000
+MEL_N_FEATS = 128
 
 HEAR_SENSE_THRESHOLD = 1e-4
 
@@ -67,6 +68,9 @@ def get_mel_n_feats(mel_min, mel_max, fstep, superres):
     return n_feats
 
 def get_n_freqs(fmin=MIN_FREQ, fmax=MAX_FREQ, fstep=FREQ_STEP, superres=FREQ_RES):
+    if MEL_N_FEATS is not None:
+        return MEL_N_FEATS
+
     mel_min = freq_to_mel(fmin)
     mel_max = freq_to_mel(fmax)
 
@@ -98,7 +102,7 @@ def sample_to_freq(fn, fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_ST
     return freq
 
 
-def get_mel_scale(fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
+def get_mel_scale(fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=MEL_N_FEATS, fstep=FREQ_STEP, superres=FREQ_RES):
     mel_min = freq_to_mel(fmin)
     mel_max = freq_to_mel(fmax)
 
@@ -189,7 +193,7 @@ def build_spectrogram(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_F
     n_save = int(x_len * fsave / sample_rate)
     spec_all = torch.fft.fft(x, dim=-1)
     spec_all_freq_res = sample_rate / spec_all.shape[-1]
-    fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
+    fn = get_mel_scale(fmin, fmax) / spec_all_freq_res
     df = torch.gradient(fn)[0] * FREQ_RES
 
     log_spec = []

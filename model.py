@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 
 class Downsample(nn.Module):
-    def __init__(self, cin: int, cout: int, ksize: int = 2, stride: int = 2):
+    def __init__(self, cin: int, cout: int, ksize: int = 3, stride: int = 2, norm=True):
         super().__init__()
 
         self.conv = nn.Conv1d(
@@ -14,9 +14,10 @@ class Downsample(nn.Module):
             out_channels=cout,
             kernel_size=ksize,
             stride=stride,
-            bias=False
+            padding=(ksize - 1) // 2,
+            bias=not norm
         )
-        self.norm = nn.BatchNorm1d(cout)
+        self.norm = nn.BatchNorm1d(cout) if norm else nn.Identity()
 
     def forward(self, x):
         x = self.conv(x)
@@ -26,17 +27,18 @@ class Downsample(nn.Module):
 
 
 class Upsample(nn.Module):
-    def __init__(self, cin: int, cout: int, ksize: int = 2):
+    def __init__(self, cin: int, cout: int, ksize: int = 2, stride : int = 2, norm = True):
         super().__init__()
 
         self.conv = nn.ConvTranspose1d(
-            in_channels=cin, 
+            in_channels=cin,
             out_channels=cout,
             kernel_size=ksize,
-            stride=ksize,
-            bias=False
+            stride=stride,
+            padding=(ksize - 1) // 2,
+            bias=not norm
         )
-        self.norm = nn.BatchNorm1d(cout)
+        self.norm = nn.BatchNorm1d(cout) if norm else nn.Identity()
 
     def forward(self, x):
         x = self.conv(x)
@@ -46,7 +48,7 @@ class Upsample(nn.Module):
 
 
 class ResNetBlock(nn.Module):
-    def __init__(self, cin, bottleneck=1, ksize=3):
+    def __init__(self, cin, bottleneck=1, ksize=3, norm=True):
         super().__init__()
         cmid = cin // bottleneck
 
@@ -56,7 +58,7 @@ class ResNetBlock(nn.Module):
 
         self.norm1 = nn.BatchNorm1d(cmid)
         self.norm2 = nn.BatchNorm1d(cmid)
-        self.norm3 = nn.BatchNorm1d(cmid)
+        self.norm3 = nn.BatchNorm1d(cmid) if norm else nn.Identity()
 
         # self.dropout = nn.Dropout(0.3)
 
@@ -88,16 +90,14 @@ class Encoder(nn.Module):
     def __init__(self, n_freqs: int):
         super().__init__()
 
-        self.in_conv = nn.Conv1d(2 * n_freqs, 1024, kernel_size=1, bias=True)
-
-        self.test = nn.Parameter(torch.zeros(3 * n_freqs, 1))
+        self.in_conv = nn.Conv1d(2 * n_freqs, 256, kernel_size=1, bias=True)
 
         self.blocks = nn.ModuleList([
-            ResNetBlock(512),
+            # ResNetBlock(256, norm=False),
 
-            Downsample(512, 512),
-            ResNetBlock(512),
-            ResNetBlock(512),
+            # Downsample(256, 512, norm=False),
+            # ResNetBlock(512),
+            # ResNetBlock(512),
 
             # Downsample(128, 256),
             # ResNetBlock(256),
@@ -118,8 +118,8 @@ class Encoder(nn.Module):
 
         x = self.in_conv(x)
 
-        # for block in self.blocks:
-        #     x = block(x)
+        for block in self.blocks:
+            x = block(x)
 
         return x
     
@@ -131,24 +131,27 @@ class Decoder(nn.Module):
         self.blocks = nn.ModuleList([
             # ResNetBlock(512),
             # ResNetBlock(512),
+            
             # Upsample(512, 256),
-
             # ResNetBlock(256),
             # ResNetBlock(256),
+            
             # Upsample(256, 128),
+            # ResNetBlock(512),
+            # ResNetBlock(512),
 
-            ResNetBlock(512),
-            ResNetBlock(512),
-            Upsample(512, 512),
+            # Upsample(512, 256, norm=False),
+            # ResNetBlock(256, norm=False),
+            # ResNetBlock(256, norm=False),
 
-            ResNetBlock(512),
+            ResNetBlock(256, norm=False),
         ])
 
-        self.out_conv = nn.Conv1d(1024, 2 * n_freqs, bias=True, kernel_size=1)
+        self.out_conv = nn.Conv1d(256, 2 * n_freqs, bias=True, kernel_size=1)
 
     def forward(self, x: torch.Tensor):
-        # for block in self.blocks:
-        #     x = block(x)
+        for block in self.blocks:
+            x = block(x)
         x = self.out_conv(x)
 
         spec_real, spec_imag = x.chunk(2, dim=1)
@@ -186,5 +189,5 @@ class Autoencoder(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        scheduler = optim.lr_scheduler.ExponentialLR(optimizer, 0.9)
+        scheduler = optim.lr_scheduler.ExponentialLR(optimizer, 1 - 5e-2)
         return [optimizer], [scheduler]

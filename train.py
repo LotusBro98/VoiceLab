@@ -40,7 +40,8 @@ def main():
     chunk, spec, sample_rate = dataset[20]
 
     with torch.no_grad():
-        spec_pred = autoencoder(spec[None, :])[0]
+        spec, spec_pred = autoencoder(spec[None, :])
+        spec, spec_pred = spec[0], spec_pred[0]
 
     f, ax = plt.subplots(3, 1, figsize=(20, 20))
     ax[0].imshow(complex_picture(spec.T)[::-1])

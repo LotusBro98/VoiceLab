@@ -173,7 +173,9 @@ class Autoencoder(pl.LightningModule):
         feats = self.encoder(spectrogram)
         reconstructed_spec = self.decoder(feats)
 
-        return reconstructed_spec
+        spectrogram = spectrogram[:, :reconstructed_spec.shape[1], :]
+        reconstructed_spec = reconstructed_spec[:, :spectrogram.shape[1], :]
+        return spectrogram, reconstructed_spec
     
     def training_step(self, batch: torch.Tensor, batch_idx):
         chunk, spec, sr = batch

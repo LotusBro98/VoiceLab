@@ -17,8 +17,9 @@ class AudioDataset(Dataset):
         for path in paths:
             track, sample_rate = librosa.load(path)
 
-            for i in range(0, len(track) - chunk_len * sample_rate, chunk_len * sample_rate):
-                chunk = track[i : i + chunk_len * sample_rate]
+            step = int(chunk_len * sample_rate)
+            for i in range(0, len(track) - step, step):
+                chunk = track[i : i + step]
                 self.chunks.append((chunk, sample_rate))
 
 

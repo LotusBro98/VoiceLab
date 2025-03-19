@@ -38,7 +38,7 @@ spectrum = build_spectrogram(track, sample_rate)
 # spectrum += 0.1 * torch.randn_like(spectrum)
 
 print(spectrum.shape)
-plt.figure(figsize=(15, 20))
+plt.figure(figsize=(20, 10))
 plt.imshow(complex_picture(spectrum[50:-50]).swapaxes(0, 1)[::-1], aspect=2, interpolation="nearest")
 plt.savefig("complex_pic.png")
 plt.close()

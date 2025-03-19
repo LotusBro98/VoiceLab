@@ -11,7 +11,7 @@ MIN_FREQ = 0
 MAX_FREQ = 11000
 MEL_N_FEATS = 128
 
-HEAR_SENSE_THRESHOLD = 1e-4
+HEAR_SENSE_THRESHOLD = 1e-2
 
 
 def get_window(n_save, win_size, shift=0):

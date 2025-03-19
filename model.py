@@ -100,20 +100,23 @@ class Encoder(nn.Module):
         self.in_conv = nn.Conv1d(2 * n_freqs, 256, kernel_size=1, bias=False)
 
         self.blocks = nn.ModuleList([
-            ResNetBlock(256, norm=True),
+            ResNetBlock(256),
 
-            Downsample(256, 256, norm=True),
-            # ResNetBlock(512),
-            # ResNetBlock(512),
+            Downsample(256, 256),
+            ResNetBlock(256),
+            ResNetBlock(256),
 
-            # Downsample(512, 512),
-            # ResNetBlock(512),
-            # ResNetBlock(512),
+            Downsample(256, 256),
+            ResNetBlock(256),
+            ResNetBlock(256),
 
-            # Downsample(512, 512),
-            # ResNetBlock(512),
-            # ResNetBlock(512),
+            Downsample(256, 256),
+            ResNetBlock(256),
+            ResNetBlock(256),
         ])
+
+        self.out_conv = nn.Conv1d(256, 64, bias=False, kernel_size=1)
+        self.out_norm = nn.BatchNorm1d(64)
 
     def forward(self, spectrogram: torch.Tensor):
         spectrogram = spectrogram.transpose(-1, -2)
@@ -128,6 +131,9 @@ class Encoder(nn.Module):
         for block in self.blocks:
             x = block(x)
 
+        x = self.out_conv(x)
+        x = self.out_norm(x)
+
         return x
     
 
@@ -135,30 +141,37 @@ class Decoder(nn.Module):
     def __init__(self, n_freqs: int):
         super().__init__()
 
+        self.in_conv = nn.Conv1d(64, 256, bias=False, kernel_size=1)
+        self.in_norm = nn.BatchNorm1d(256)
+
         self.blocks = nn.ModuleList([
-            # ResNetBlock(512),
-            # ResNetBlock(512),
+            ResNetBlock(256),
+            ResNetBlock(256),
             
-            # Upsample(512, 512),
-            # ResNetBlock(512),
-            # ResNetBlock(512),
+            Upsample(256, 256),
+            ResNetBlock(256),
+            ResNetBlock(256),
             
-            # Upsample(512, 512),
-            # ResNetBlock(512),
-            # ResNetBlock(512),
+            Upsample(256, 256),
+            ResNetBlock(256),
+            ResNetBlock(256),
 
-            Upsample(256, 256, norm=True),
-            ResNetBlock(256, norm=True),
-            ResNetBlock(256, norm=True),
+            Upsample(256, 256),
+            ResNetBlock(256),
+            ResNetBlock(256),
 
-            ResNetBlock(256, norm=True),
+            ResNetBlock(256),
         ])
 
         self.out_conv = nn.Conv1d(256, 2 * n_freqs, bias=False, kernel_size=1)
 
     def forward(self, x: torch.Tensor):
+        x = self.in_conv(x)
+        x = self.in_norm(x)
+
         for block in self.blocks:
             x = block(x)
+        
         x = self.out_conv(x)
 
         spec_real, spec_imag = x.chunk(2, dim=1)
@@ -169,94 +182,13 @@ class Decoder(nn.Module):
         return spectrogram
     
 
-class Discriminator(nn.Module):
-    def __init__(self, n_freqs: int):
-        super().__init__()
-        ksize = 3
-
-        self.in_conv = Downsample(2 * n_freqs, 256, ksize=ksize, stride=2, act=True)
-
-        self.blocks = nn.ModuleList([
-            ResNetBlock(256, ksize=ksize),
-
-            Downsample(256, 256, ksize=ksize, stride=2, act=True),
-            ResNetBlock(256, ksize=ksize),
-            ResNetBlock(256, ksize=ksize),
-
-            Downsample(256, 256, ksize=ksize, stride=2, act=True),
-            ResNetBlock(256, ksize=ksize),
-            ResNetBlock(256, ksize=ksize),
-
-            Downsample(256, 256, ksize=ksize, stride=2, act=True),
-            ResNetBlock(256, ksize=ksize),
-            ResNetBlock(256, ksize=ksize),
-        ])
-
-        self.out_proj = nn.Conv1d(256, 1, 1, bias=False)
-        self.out_norm = nn.BatchNorm1d(1)
-
-        self.grad_rev = GradientReverse()
-
-    def forward(self, *args) -> torch.Tensor:
-        spectrogram = torch.concat([*args], dim=0)
-
-        spectrogram = spectrogram.transpose(-1, -2)
-        x = torch.concat([
-            spectrogram.real,
-            spectrogram.imag
-        ], dim=1)
-
-        x = self.in_conv(x)
-
-        for block in self.blocks:
-            x = block(x)
-
-        x = self.out_proj(x)
-        x = self.out_norm(x)
-
-        if len(args) > 1:
-            return x.chunk(len(args))
-        else: 
-            return x
-    
-    def discriminate(self, spec_real: torch.Tensor, spec_fake: torch.Tensor, gen: bool) -> torch.Tensor:
-        # spec_fake = self.grad_rev(spec_fake)
-        
-        pred_real, pred_fake = self.forward(spec_real, spec_fake)
-
-        loss_real = F.binary_cross_entropy_with_logits(pred_real, torch.ones_like(pred_real))
-        loss_fake = F.binary_cross_entropy_with_logits(pred_fake, torch.ones_like(pred_fake) if gen else torch.zeros_like(pred_fake))
-        loss = loss_real + loss_fake
-
-        return loss
-    
-    def disc_loss(self, spec_real: torch.Tensor, spec_fake: torch.Tensor) -> torch.Tensor:
-        pred_real, pred_fake = self.forward(spec_real, spec_fake)
-
-        loss_real = F.binary_cross_entropy_with_logits(pred_real, torch.ones_like(pred_real))
-        loss_fake = F.binary_cross_entropy_with_logits(pred_fake, torch.zeros_like(pred_fake))
-        loss = (loss_real + loss_fake) / 2
-
-        return loss
-    
-    def gen_loss(self, spec_real: torch.Tensor, spec_fake: torch.Tensor) -> torch.Tensor:
-        pred_real, pred_fake = self.forward(spec_real, spec_fake)
-
-        loss_fake = F.binary_cross_entropy_with_logits(pred_fake, torch.ones_like(pred_fake))
-
-        return loss_fake
-    
-
 class Autoencoder(pl.LightningModule):
     def __init__(self, n_freqs: int):
         super().__init__()
 
         self.encoder = Encoder(n_freqs)
         self.decoder = Decoder(n_freqs)
-        self.discriminator = Discriminator(n_freqs)
         self.in_norm = nn.BatchNorm1d(2 * n_freqs, affine=False)
-
-        self.automatic_optimization = False
 
     def normalize_input(self, spec):
         spec = spec.transpose(1, -1)
@@ -298,39 +230,19 @@ class Autoencoder(pl.LightningModule):
         return spectrogram, reconstructed_spec
     
     def training_step(self, batch: torch.Tensor, batch_idx):
-        chunk, spec0, sr = batch
+        chunk, spec, sr = batch
 
-        opt_g, opt_d = self.optimizers()
-
-        # Generator
-        opt_g.zero_grad()
-
-        spec, pred_spec = self(spec0)
+        spec, pred_spec = self(spec)
 
         # loss_ae = (pred_spec - spec).abs().square().mean().sqrt() / spec.std()
         loss_ae = (pred_spec - spec).abs().mean() / spec.std()
-        loss_disc_gen = 0#self.discriminator.gen_loss(spec, pred_spec)
-        loss_gen = 10 * loss_ae + loss_disc_gen
+        loss = loss_ae
 
         self.log("Lae", loss_ae, prog_bar=True)
-        self.log("Lg", loss_disc_gen, prog_bar=True)
-        self.manual_backward(loss_gen)
-        opt_g.step()
-        
-        # # Discriminator
-        # opt_d.zero_grad()
-
-        # # spec, pred_spec = self(spec0)
-
-        # loss_disc = self.discriminator.disc_loss(spec, pred_spec.detach())
-
-        # self.log("Ld", loss_disc, prog_bar=True)
-        # self.manual_backward(loss_disc)
-        # opt_d.step()
+        self.log("lr", self.lr_schedulers().get_last_lr()[0], prog_bar=True)
+        return loss
 
     def configure_optimizers(self):
-        opt_g = optim.Adam(chain(self.encoder.parameters(), self.decoder.parameters()), lr=1e-3)
-        opt_d = optim.Adam(self.discriminator.parameters(), lr=1e-3)
-        return [opt_g, opt_d], []
-        # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, 1 - 5e-4)
-        # return [optimizer], [scheduler]
+        optimizer = optim.Adam(self.parameters(), lr=1e-3)
+        scheduler = optim.lr_scheduler.ExponentialLR(optimizer, 1 - 5e-4)
+        return [optimizer], [scheduler]

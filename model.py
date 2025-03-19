@@ -234,8 +234,8 @@ class Autoencoder(pl.LightningModule):
 
         spec, pred_spec = self(spec)
 
-        # loss_ae = (pred_spec - spec).abs().square().mean().sqrt() / spec.std()
-        loss_ae = (pred_spec - spec).abs().mean() / spec.std()
+        loss_ae = (pred_spec - spec).abs().square().mean().sqrt() / spec.std()
+        # loss_ae = (pred_spec - spec).abs().mean() / spec.std()
         loss = loss_ae
 
         self.log("Lae", loss_ae, prog_bar=True)

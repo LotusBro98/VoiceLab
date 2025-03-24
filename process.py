@@ -160,9 +160,9 @@ def from_freq_diff_repr(spectrum: torch.Tensor) -> torch.Tensor:
     return spectrum
 
 
-def to_bel_scale(spectrum) -> torch.Tensor:
+def to_bel_scale(spectrum, hear_sense_threshold=HEAR_SENSE_THRESHOLD) -> torch.Tensor:
     ampl = spectrum.abs()
-    ampl = torch.log10(1 + ampl / HEAR_SENSE_THRESHOLD)
+    ampl = torch.log10(1 + ampl / hear_sense_threshold)
 
     spectrum = (
         ampl *

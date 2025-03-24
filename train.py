@@ -1,6 +1,7 @@
 import os
 
 import librosa
+import random
 import numpy as np
 import torch
 import pytorch_lightning as pl
@@ -18,7 +19,7 @@ def main():
     dataset = AudioDataset(["data/podcast.mp3"])
     train_loader = DataLoader(
         dataset, 
-        batch_size=4, 
+        batch_size=1, 
         num_workers=os.cpu_count(), 
         persistent_workers=True
     )
@@ -27,8 +28,8 @@ def main():
 
     torch.set_float32_matmul_precision('medium')
     trainer = pl.Trainer(
-        # limit_train_batches=100, 
-        max_epochs=50,
+        # limit_train_batches=10000, 
+        max_epochs=1,
         # accelerator="cpu"
         devices=1
     )
@@ -37,7 +38,8 @@ def main():
 
     autoencoder.eval()
 
-    chunk, spec, sample_rate = dataset[20]
+    random.seed(42)
+    chunk, spec, sample_rate = random.choice(dataset)
 
     with torch.no_grad():
         spec, spec_pred = autoencoder(spec[None, :])

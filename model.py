@@ -264,6 +264,7 @@ class Discriminator(nn.Module):
         return x
     
     def loss_disc(self, spec_real, spec_fake):
+        spec_fake = self.grad_rev(spec_fake)
         pred_real, pred_fake = self(spec_real, spec_fake)
 
         loss_real = F.binary_cross_entropy_with_logits(pred_real, torch.ones_like(pred_real))
@@ -271,15 +272,6 @@ class Discriminator(nn.Module):
         loss = (loss_real + loss_fake) / 2
 
         return loss
-    
-    def loss_gen(self, spec_real, spec_fake):
-        pred_real, pred_fake = self(spec_real, spec_fake)
-
-        loss_fake = F.binary_cross_entropy_with_logits(pred_fake, torch.ones_like(pred_fake))
-        loss = loss_fake
-
-        return loss
-
     
 
 class Autoencoder(pl.LightningModule):
@@ -291,8 +283,6 @@ class Autoencoder(pl.LightningModule):
         self.discriminator = Discriminator(n_freqs)
 
         self.in_norm = nn.BatchNorm1d(2 * n_freqs, affine=False)
-
-        self.automatic_optimization = False
 
     @torch.no_grad
     def normalize_input(self, spec):
@@ -345,51 +335,21 @@ class Autoencoder(pl.LightningModule):
     
     def training_step(self, batch: torch.Tensor, batch_idx):
         chunk, spec, sr = batch
-        opt_g, opt_d = self.optimizers()
 
         spec0 = self.normalize_input(spec)
 
-        opt_g.zero_grad()
         spec, pred_spec = self(spec0, norm=False)
-        loss_gen = self.discriminator.loss_gen(spec, pred_spec)
-        self.manual_backward(loss_gen)
-        opt_g.step()
-        self.log("Lg", loss_gen, prog_bar=True)
+        loss_disc = self.discriminator.loss_disc(spec, pred_spec)
+        loss = loss_disc
 
-        opt_d.zero_grad()
-        spec, pred_spec = self(spec0, norm=False)
-        loss_disc = self.discriminator.loss_disc(spec, pred_spec.detach())
-        self.manual_backward(loss_disc)
-        opt_d.step()
         self.log("Ld", loss_disc, prog_bar=True)
-
-        sch_g, sch_d = self.lr_schedulers()
-        sch_g.step()
-        sch_d.step()
-        self.log("lr", sch_g.get_last_lr()[0], prog_bar=True)
-
-        # loss_ae = 0
-        # loss_ae = (pred_spec - spec).abs().square().mean().sqrt() / spec.std()
-        # loss_ae = (
-        #     F.avg_pool2d(pred_spec[:, None, :, :].abs().square(), 5).sqrt() - 
-        #     F.avg_pool2d(spec[:, None, :, :].abs().square(), 5).sqrt()
-        # ).square().mean().sqrt() / spec.std()
-        # loss_disc = self.discriminator.discriminate(spec, pred_spec, )
-        # loss = 10 * loss_ae + loss_disc
-
-        # self.log("Lae", loss_ae, prog_bar=True)
-        # self.log("Ld", loss_disc, prog_bar=True)
-        # self.log("lr", self.lr_schedulers().get_last_lr()[0], prog_bar=True)
-        # return loss
+        self.log("lr", self.lr_schedulers().get_last_lr()[0], prog_bar=True)
+        return loss
 
     def configure_optimizers(self):
-        # optimizer = optim.Adam(self.parameters(), lr=1e-3)
-        # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, 1 - 5e-4)
-        # return [optimizer], [scheduler]
         base_lr = 1e-4
 
-        opt_g = optim.Adam(self.decoder.parameters(), lr=base_lr)
-        opt_d = optim.Adam(self.discriminator.parameters(), lr=base_lr)
+        opt_g = optim.Adam(self.parameters(), lr=base_lr)
 
         T1 = 100
         T2 = 10000
@@ -397,8 +357,9 @@ class Autoencoder(pl.LightningModule):
             optim.lr_scheduler.LinearLR(opt_g, 1 / T1, 1, total_iters=T1),
             optim.lr_scheduler.ExponentialLR(opt_g, math.exp(-1 / T2))
         ], milestones=[T1])
-        sch_d = optim.lr_scheduler.SequentialLR(opt_d, [
-            optim.lr_scheduler.LinearLR(opt_d, 1 / T1, 1, total_iters=T1),
-            optim.lr_scheduler.ExponentialLR(opt_d, math.exp(-1 / T2))
-        ], milestones=[T1])
-        return [opt_g, opt_d], [sch_g, sch_d]
+        sch_g = {
+            'scheduler': sch_g,
+            'interval': 'step', # or 'epoch'
+            'frequency': 1
+        }
+        return [opt_g], [sch_g]

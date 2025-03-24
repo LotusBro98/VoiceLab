@@ -22,7 +22,7 @@ class Downsample(nn.Module):
             padding=(ksize - 1) // 2,
             bias=not norm
         )
-        self.norm = nn.BatchNorm1d(cout) if norm else nn.Identity()
+        self.norm = nn.LazyInstanceNorm1d() if norm else nn.Identity()
         self.act = nn.ReLU() if act else nn.Identity()
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
@@ -36,7 +36,7 @@ class Downsample(nn.Module):
 
 
 class Upsample(nn.Module):
-    def __init__(self, cin: int, cout: int, ksize: int = 3, stride : int = 2, norm = True, act=False):
+    def __init__(self, cin: int, cout: int, ksize: int = 3, stride : int = 2, norm = True, act=True):
         super().__init__()
 
         self.conv = nn.ConvTranspose1d(
@@ -47,7 +47,7 @@ class Upsample(nn.Module):
             padding=(ksize - 1) // 2,
             bias=not norm
         )
-        self.norm = nn.BatchNorm1d(cout) if norm else nn.Identity()
+        self.norm = nn.LazyInstanceNorm1d() if norm else nn.Identity()
         self.act = nn.ReLU() if act else nn.Identity()
 
         # self.upsample = nn.Upsample(scale_factor=2)
@@ -70,9 +70,9 @@ class ResNetBlock(nn.Module):
         self.conv2 = nn.Conv1d(cmid, cmid, kernel_size=ksize, padding="same", bias=False)
         self.conv3 = nn.Conv1d(cmid, cin, kernel_size=ksize, padding="same", bias=False)
 
-        self.norm1 = nn.BatchNorm1d(cmid)
-        self.norm2 = nn.BatchNorm1d(cmid)
-        self.norm3 = nn.BatchNorm1d(cin) if norm else nn.Identity()
+        self.norm1 = nn.LazyInstanceNorm1d()
+        self.norm2 = nn.LazyInstanceNorm1d()
+        self.norm3 = nn.LazyInstanceNorm1d() if norm else nn.Identity()
 
         self.act = nn.ReLU()
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
@@ -126,7 +126,7 @@ class Encoder(nn.Module):
         ])
 
         self.out_conv = nn.Conv1d(d_model, d_emb, bias=False, kernel_size=1)
-        self.out_norm = nn.BatchNorm1d(d_emb)
+        self.out_norm = nn.LazyInstanceNorm1d()
 
     def forward(self, spectrogram: torch.Tensor):
         spectrogram = spectrogram.transpose(-1, -2)
@@ -152,12 +152,12 @@ class Decoder(nn.Module):
         super().__init__()
 
         d_emb = 256
-        d_model = 512
+        d_model = 256
         ksize_out = 33
         ksize = 3
 
         self.in_conv = nn.Conv1d(d_emb, d_model, bias=False, kernel_size=1)
-        self.in_norm = nn.BatchNorm1d(d_model)
+        self.in_norm = nn.LazyInstanceNorm1d()
 
         self.blocks = nn.ModuleList([
             ResNetBlock(d_model, ksize=ksize),
@@ -183,12 +183,8 @@ class Decoder(nn.Module):
             # ResNetBlock(d_model, ksize=ksize, norm=False),
         ])
 
-        self.out_conv = nn.Sequential(
-            # nn.Conv1d(d_model, d_model * 2, bias=False, kernel_size=ksize),
-            # nn.LazyBatchNorm1d(),
-            # nn.ReLU(),
-            nn.Conv1d(d_model, 2 * n_freqs, bias=False, kernel_size=ksize_out)
-        )
+        self.out_conv = nn.Conv1d(d_model, 2 * n_freqs, bias=False, kernel_size=ksize_out)
+        self.out_norm = nn.LazyInstanceNorm1d(affine=False)
 
     def forward(self, x: torch.Tensor):
         x = self.in_conv(x)
@@ -198,6 +194,7 @@ class Decoder(nn.Module):
             x = block(x)
         
         x = self.out_conv(x)
+        x = self.out_norm(x)
 
         spec_real, spec_imag = x.chunk(2, dim=1)
         spectrogram = torch.complex(spec_real, spec_imag)
@@ -211,12 +208,12 @@ class Discriminator(nn.Module):
     def __init__(self, n_freqs: int):
         super().__init__()
 
-        d_model = 256
+        d_model = 128
         ksize_in = 15
-        ksize = 5
+        ksize = 3
 
         self.in_conv = nn.Conv1d(2 * n_freqs, d_model, kernel_size=ksize_in, bias=False)
-        self.in_norm = nn.LazyBatchNorm1d()
+        self.in_norm = nn.LazyInstanceNorm1d()
 
         self.blocks = nn.ModuleList([
             # ResNetBlock(256, dropout=0.5),
@@ -231,31 +228,27 @@ class Discriminator(nn.Module):
             # ResNetBlock(d_model, ksize=ksize),
         ])
 
-        self.out_conv = nn.Conv1d(d_model, 1, bias=False, kernel_size=1)
+        self.out_conv = nn.Conv1d(d_model, 1, bias=False, kernel_size=ksize)
         self.out_norm = nn.BatchNorm1d(1)
 
         self.grad_rev = GradientReverse()
 
     def forward(self, *args: torch.Tensor):
-        preds = []
-        for spectrogram in args:
-            spectrogram = spectrogram.transpose(-1, -2)
+        spectrogram = torch.concat(args, dim=0)
+        spectrogram = spectrogram.transpose(-1, -2)
 
-            x = torch.concat([
-                spectrogram.real,
-                spectrogram.imag
-            ], dim=1)
+        x = torch.concat([
+            spectrogram.real,
+            spectrogram.imag
+        ], dim=1)
 
-            x = self.in_conv(x)
-            x = self.in_norm(x)
+        x = self.in_conv(x)
+        x = self.in_norm(x)
 
-            for block in self.blocks:
-                x = block(x)
+        for block in self.blocks:
+            x = block(x)
 
-            x = self.out_conv(x)
-            preds.append(x)
-
-        x = torch.concat(preds, dim=0)
+        x = self.out_conv(x)
         x = self.out_norm(x)
 
         if (len(args) > 1):

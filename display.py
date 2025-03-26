@@ -1,3 +1,4 @@
+from typing import Literal
 import numpy as np
 from matplotlib import pyplot as plt
 import cv2 as cv
@@ -26,9 +27,12 @@ GRID_COLOR = 'gray'
 HALF_NOTE = np.power(2, 1/12/2)
 
 
-def complex_picture(spectrum: torch.Tensor):
+def complex_picture(spectrum: torch.Tensor, ampl_cap: Literal["max", "std"] = "std"):
     ampl = spectrum.abs()
-    ampl /= ampl.std() * 3
+    if ampl_cap == "std":
+        ampl /= ampl.std() * 3
+    elif ampl_cap == "max":
+        ampl /= ampl.max()
 
     phase = spectrum.angle()
 

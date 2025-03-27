@@ -1,5 +1,6 @@
 from itertools import chain
 import math
+from typing import Literal
 import torch
 from torch import nn
 from torch import optim
@@ -11,7 +12,10 @@ from special_layers import GradientReverse
 
 
 class Downsample(nn.Module):
-    def __init__(self, cin: int, cout: int, ksize: int = 3, stride: int = 2, norm=True, act=False, dropout=0):
+    def __init__(self, cin: int, cout: int, ksize: int = 3, stride: int = 2, 
+                 norm: Literal["batch", "instance", "none", None] = "batch", 
+                 act: Literal["relu", "leakyrelu", "none", None] = "relu", 
+                 dropout=0):
         super().__init__()
 
         self.conv = nn.Conv1d(
@@ -22,8 +26,8 @@ class Downsample(nn.Module):
             padding=(ksize - 1) // 2,
             bias=not norm
         )
-        self.norm = nn.LazyInstanceNorm1d() if norm else nn.Identity()
-        self.act = nn.ReLU() if act else nn.Identity()
+        self.norm = nn.LazyBatchNorm1d() if norm == "batch" else nn.LazyInstanceNorm1d() if norm == "instance" else nn.Identity()
+        self.act = nn.ReLU() if act == "relu" else nn.LeakyReLU(0.2) if act == "leakyrelu" else nn.Identity()
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
     def forward(self, x):
@@ -62,19 +66,24 @@ class Upsample(nn.Module):
 
 
 class ResNetBlock(nn.Module):
-    def __init__(self, cin, bottleneck=1, ksize=3, norm=True, dropout=0):
+    def __init__(self, cin, bottleneck=1, ksize=3,
+                 norm: Literal["batch", "instance", "none", None] = "batch", 
+                 act: Literal["relu", "leakyrelu", "none", None] = "relu",  
+                 dropout=0):
         super().__init__()
         cmid = int(cin * bottleneck)
+
+        norm_class = nn.LazyBatchNorm1d if norm == "batch" else nn.LazyInstanceNorm1d if norm == "instance" else nn.Identity
 
         self.conv1 = nn.Conv1d(cin, cmid, kernel_size=ksize, padding="same", bias=False)
         self.conv2 = nn.Conv1d(cmid, cmid, kernel_size=ksize, padding="same", bias=False)
         self.conv3 = nn.Conv1d(cmid, cin, kernel_size=ksize, padding="same", bias=False)
 
-        self.norm1 = nn.LazyInstanceNorm1d()
-        self.norm2 = nn.LazyInstanceNorm1d()
-        self.norm3 = nn.LazyInstanceNorm1d() if norm else nn.Identity()
+        self.norm1 = norm_class()
+        self.norm2 = norm_class()
+        self.norm3 = norm_class()
 
-        self.act = nn.ReLU()
+        self.act = nn.ReLU() if act == "relu" else nn.LeakyReLU(0.2) if act == "leakyrelu" else nn.Identity()
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
     def forward(self, x):
@@ -105,28 +114,33 @@ class Encoder(nn.Module):
         super().__init__()
 
         d_emb = 256
-        d_model = 1
+        d_model = 512
+        ksize = 3
+        ksize_in = 7
+        stride_in = 1
 
-        self.in_conv = nn.Conv1d(2 * n_freqs, d_model, kernel_size=1, bias=False)
+        self.in_conv = Downsample(2 * n_freqs, d_model, ksize=ksize_in, stride=stride_in, norm="none", act="none")
 
         self.blocks = nn.ModuleList([
-            # ResNetBlock(256),
+            ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model),
-            # ResNetBlock(256),
-            # ResNetBlock(256),
+            Downsample(d_model, d_model, ksize=ksize),
+            ResNetBlock(d_model, ksize=ksize),
+            ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model),
-            # ResNetBlock(256),
-            # ResNetBlock(256),
+            # Downsample(d_model, d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model),
-            # ResNetBlock(256),
-            # ResNetBlock(256),
+            # Downsample(d_model, d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
         ])
 
-        self.out_conv = nn.Conv1d(d_model, d_emb, bias=False, kernel_size=1)
-        self.out_norm = nn.LazyInstanceNorm1d()
+        self.out_conv = nn.Sequential(
+            nn.Conv1d(d_model, d_emb, bias=False, kernel_size=ksize),
+            nn.LazyBatchNorm1d(),
+        )
 
     def forward(self, spectrogram: torch.Tensor):
         spectrogram = spectrogram.transpose(-1, -2)
@@ -142,7 +156,6 @@ class Encoder(nn.Module):
             x = block(x)
 
         x = self.out_conv(x)
-        x = self.out_norm(x)
 
         return x
     
@@ -152,49 +165,53 @@ class Decoder(nn.Module):
         super().__init__()
 
         d_emb = 256
-        d_model = 256
-        ksize_out = 33
+        d_model = 512
+        ksize_out = 7
+        stride_out = 1
         ksize = 3
 
-        self.in_conv = nn.Conv1d(d_emb, d_model, bias=False, kernel_size=1)
-        self.in_norm = nn.LazyInstanceNorm1d()
+        self.in_conv = nn.Sequential(
+            nn.Conv1d(d_emb, d_model, bias=False, kernel_size=1),
+            nn.LazyBatchNorm1d(),
+            nn.ReLU(),
+        )
 
         self.blocks = nn.ModuleList([
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
             
-            Upsample(d_model, d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
+            # Upsample(d_model, d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
             
-            Upsample(d_model, d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
+            # Upsample(d_model, d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
             ResNetBlock(d_model, ksize=ksize),
             ResNetBlock(d_model, ksize=ksize),
 
             Upsample(d_model, d_model, ksize=ksize),
             ResNetBlock(d_model, ksize=ksize),
             ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
 
             # ResNetBlock(d_model, ksize=ksize, norm=False),
         ])
 
-        self.out_conv = nn.Conv1d(d_model, 2 * n_freqs, bias=False, kernel_size=ksize_out)
-        self.out_norm = nn.LazyInstanceNorm1d(affine=False)
+        self.out_conv = nn.Sequential(
+            nn.ConvTranspose1d(d_model, 2 * n_freqs, kernel_size=ksize_out, stride=stride_out, bias=False, padding=ksize_out//2),
+            # nn.LazyInstanceNorm1d(affine=False)
+        )
 
     def forward(self, x: torch.Tensor):
         x = self.in_conv(x)
-        x = self.in_norm(x)
 
         for block in self.blocks:
             x = block(x)
         
         x = self.out_conv(x)
-        x = self.out_norm(x)
 
         spec_real, spec_imag = x.chunk(2, dim=1)
         spectrogram = torch.complex(spec_real, spec_imag)
@@ -208,28 +225,36 @@ class Discriminator(nn.Module):
     def __init__(self, n_freqs: int):
         super().__init__()
 
-        d_model = 128
-        ksize_in = 15
+        d_model = 512
+        ksize_in = 7
+        stride_in = 2
         ksize = 3
 
-        self.in_conv = nn.Conv1d(2 * n_freqs, d_model, kernel_size=ksize_in, bias=False)
-        self.in_norm = nn.LazyInstanceNorm1d()
+        self.in_conv = Downsample(2 * n_freqs, d_model, ksize=ksize_in, stride=stride_in, norm="instance", act="none")
 
         self.blocks = nn.ModuleList([
-            # ResNetBlock(256, dropout=0.5),
-
-            Downsample(d_model, d_model, ksize=ksize, act=True),
             # ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model, ksize=ksize, act=True),
+            Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
             # ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model, ksize=ksize, act=True),
+            Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
             # ResNetBlock(d_model, ksize=ksize),
+
+            Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # ResNetBlock(d_model, ksize=ksize),
+
+            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
         ])
 
-        self.out_conv = nn.Conv1d(d_model, 1, bias=False, kernel_size=ksize)
-        self.out_norm = nn.BatchNorm1d(1)
+        self.out_conv = nn.Sequential(
+            nn.Conv1d(d_model, 1, bias=False, kernel_size=ksize),
+            nn.BatchNorm1d(1),
+        )
 
         self.grad_rev = GradientReverse()
 
@@ -243,13 +268,11 @@ class Discriminator(nn.Module):
         ], dim=1)
 
         x = self.in_conv(x)
-        x = self.in_norm(x)
 
         for block in self.blocks:
             x = block(x)
 
         x = self.out_conv(x)
-        x = self.out_norm(x)
 
         if (len(args) > 1):
             x = x.chunk(len(args))
@@ -285,7 +308,7 @@ class Autoencoder(pl.LightningModule):
             spec.imag
         ], dim=1)
 
-        spec = self.in_norm(spec)
+        # spec = self.in_norm(spec)
 
         spec_real, spec_imag = spec.chunk(2, dim=1)
         spec = torch.complex(spec_real, spec_imag)
@@ -300,9 +323,9 @@ class Autoencoder(pl.LightningModule):
             spec.imag
         ], dim=1)
 
-        mean = self.in_norm.running_mean[:, None].detach()
-        var = self.in_norm.running_var[:, None].sqrt().detach()
-        spec = spec * var + mean
+        # mean = self.in_norm.running_mean[:, None].detach()
+        # var = self.in_norm.running_var[:, None].sqrt().detach()
+        # spec = spec * var + mean
         
         spec_real, spec_imag = spec.chunk(2, dim=1)
         spec = torch.complex(spec_real, spec_imag)
@@ -314,7 +337,7 @@ class Autoencoder(pl.LightningModule):
             spectrogram = self.normalize_input(spectrogram)
 
         feats = self.encoder(spectrogram)
-        feats = torch.randn_like(feats)
+        # feats = torch.randn_like(feats)
         reconstructed_spec = self.decoder(feats)
 
         if norm:
@@ -332,9 +355,15 @@ class Autoencoder(pl.LightningModule):
         spec0 = self.normalize_input(spec)
 
         spec, pred_spec = self(spec0, norm=False)
+        # loss_ae = (spec - pred_spec).abs().square().mean().sqrt() / spec.std()
+        loss_ae = (
+            (pred_spec.real - spec.real).square() / spec.real.std().square() +
+            (pred_spec.imag - spec.imag).square() / spec.imag.std().square()
+        ).mean().sqrt()
         loss_disc = self.discriminator.loss_disc(spec, pred_spec)
-        loss = loss_disc
+        loss = 100 * loss_ae + loss_disc
 
+        self.log("Lae", loss_ae, prog_bar=True)
         self.log("Ld", loss_disc, prog_bar=True)
         self.log("lr", self.lr_schedulers().get_last_lr()[0], prog_bar=True)
         return loss
@@ -345,7 +374,7 @@ class Autoencoder(pl.LightningModule):
         opt_g = optim.Adam(self.parameters(), lr=base_lr)
 
         T1 = 100
-        T2 = 10000
+        T2 = 20000
         sch_g = optim.lr_scheduler.SequentialLR(opt_g, [
             optim.lr_scheduler.LinearLR(opt_g, 1 / T1, 1, total_iters=T1),
             optim.lr_scheduler.ExponentialLR(opt_g, math.exp(-1 / T2))

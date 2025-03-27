@@ -19,7 +19,7 @@ def main():
     dataset = AudioDataset(["data/podcast.mp3"])
     train_loader = DataLoader(
         dataset, 
-        batch_size=1, 
+        batch_size=4, 
         num_workers=os.cpu_count(), 
         persistent_workers=True
     )
@@ -58,7 +58,8 @@ def main():
     track_pred = generate_sound(spec_pred, sample_rate)
 
     write("track.wav", sample_rate, (track_pred*2**31).astype(np.int32))
-    write("orig.wav", sample_rate, (track*2**31).astype(np.int32))
+    write("orig_back.wav", sample_rate, (track*2**31).astype(np.int32))
+    write("orig.wav", sample_rate, (chunk.numpy()*2**31).astype(np.int32))
 
 
 if __name__ == "__main__":

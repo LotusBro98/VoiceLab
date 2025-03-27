@@ -14,7 +14,7 @@ from decompose import extract_voice
 # SOURCE = "data/Alan_Jackson_-_Chattahoochee_48072565.mp3"
 # SOURCE = "data/Lenka.mp3"
 SOURCE = "data/podcast.mp3"
-TIME_START = 100
+TIME_START = 200
 TIME_WINDOW = 5
 
 track, sample_rate = librosa.load(SOURCE)

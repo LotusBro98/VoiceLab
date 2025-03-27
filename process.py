@@ -5,8 +5,8 @@ import torch
 from scipy.special import erfinv
 from scipy.interpolate import interp1d
 
-SAVE_FREQ = 1000
-REPR_FREQ = 100
+SAVE_FREQ = 200
+REPR_FREQ = 200
 FREQ_STEP = 2 ** (1/12)
 FREQ_RES = 2
 MIN_FREQ = 0
@@ -19,7 +19,7 @@ HEAR_SENSE_THRESHOLD = 1e-2
 def get_window(n_save, win_size, shift=0):
     window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
 
-    win_size = min(n_save / 3, win_size)
+    # win_size = min(n_save / 3, win_size)
     prob_outside = 1e-2
     std = (win_size / 2) / erfinv(1 - prob_outside)
     window = torch.exp(-0.5 * torch.square(window / std))
@@ -206,10 +206,11 @@ def build_spectrogram(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_F
     log_spec = to_freq_diff_repr(log_spec)
     log_spec = to_bel_scale(log_spec)
 
-    t = np.linspace(0, 1, log_spec.shape[-2] - 1)
-    f = interp1d(t, log_spec[..., 1:, :], axis=-2, kind='quadratic')
-    t_new = np.linspace(0, 1, int((log_spec.shape[-2] - 1) * REPR_FREQ / SAVE_FREQ))
-    log_spec = torch.concat([log_spec[..., :1, :], torch.tensor(f(t_new))], dim=-2)
+    if SAVE_FREQ != REPR_FREQ:
+        t = np.linspace(0, 1, log_spec.shape[-2] - 1)
+        f = interp1d(t, log_spec[..., 1:, :], axis=-2, kind='quadratic')
+        t_new = np.linspace(0, 1, int((log_spec.shape[-2] - 1) * REPR_FREQ / SAVE_FREQ))
+        log_spec = torch.concat([log_spec[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
 
     return log_spec
 
@@ -233,10 +234,11 @@ def set_subset(spec_all, fn, win_size, n_save, spec, weights):
 
 
 def generate_sound(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
-    t = np.linspace(0, 1, spectrum.shape[-2] - 1)
-    f = interp1d(t, spectrum[..., 1:, :], axis=-2, kind='quadratic')
-    t_new = np.linspace(0, 1, int((spectrum.shape[-2] - 1) * SAVE_FREQ / REPR_FREQ))
-    spectrum = torch.concat([spectrum[..., :1, :], torch.tensor(f(t_new))], dim=-2)
+    if SAVE_FREQ != REPR_FREQ:
+        t = np.linspace(0, 1, spectrum.shape[-2] - 1)
+        f = interp1d(t, spectrum[..., 1:, :], axis=-2, kind='quadratic')
+        t_new = np.linspace(0, 1, int((spectrum.shape[-2] - 1) * SAVE_FREQ / REPR_FREQ))
+        spectrum = torch.concat([spectrum[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
     
     n_all = int(len(spectrum) * sample_rate / fsave)
     n_save = spectrum.shape[0]

@@ -1,6 +1,7 @@
 import glob
 from typing import List
 import librosa
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 
@@ -20,18 +21,24 @@ class AudioDataset(Dataset):
             step = int(chunk_len * sample_rate)
             for i in range(0, len(track) - step, step):
                 chunk = track[i : i + step]
-                self.chunks.append((chunk, sample_rate))
+                self.chunks.append(chunk)
+
+        self.chunks = torch.from_numpy(np.stack(self.chunks, axis=0))
+        self.spec = build_spectrogram(self.chunks, sample_rate)
+        self.sample_rate = sample_rate
 
 
     def __getitem__(self, index) -> torch.Tensor:
-        chunk, sample_rate = self.chunks[index]
+        index = index % len(self.chunks)
 
-        spec = build_spectrogram(chunk, sample_rate)
+        chunk = self.chunks[index]
+        sample_rate = self.sample_rate
+        spec = self.spec[index]
 
         return chunk, spec, sample_rate
 
     def __len__(self):
-        return len(self.chunks)
+        return len(self.chunks) * 100
     
     def get_n_freqs(self):
         return get_n_freqs()

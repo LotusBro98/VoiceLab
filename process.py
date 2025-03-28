@@ -1,52 +1,42 @@
 import math
+from typing import Literal
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from torch import nn
+from torch.nn import functional as F
 from scipy.special import erfinv
 from scipy.interpolate import interp1d
+import cv2 as cv
 
-SAVE_FREQ = 200
-REPR_FREQ = 200
-FREQ_STEP = 2 ** (1/12)
-FREQ_RES = 2
-MIN_FREQ = 0
-MAX_FREQ = 11000
-MEL_N_FEATS = 128
+# SAVE_FREQ = 200
+# FREQ_STEP = 2 ** (1/12)
+# FREQ_RES = 2
+# MIN_FREQ = 0
+# MAX_FREQ = 11000
+# MEL_N_FEATS = 128
 
-HEAR_SENSE_THRESHOLD = 1e-2
-
-
-def get_window(n_save, win_size, shift=0):
-    window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
-
-    # win_size = min(n_save / 3, win_size)
-    prob_outside = 1e-2
-    std = (win_size / 2) / erfinv(1 - prob_outside)
-    window = torch.exp(-0.5 * torch.square(window / std))
-    window -= window.min()
-    window /= window.max()
-
-    return window
+# HEAR_SENSE_THRESHOLD = 1e-2
 
 
-def get_subset(spec_all, fn, win_size, n_save):
-    win = get_window(n_save, win_size)
-    if len(spec_all.shape) == 2:
-        win = win[None, ...]
-    win = win.to(spec_all.device)
+# def get_subset(spec_all, fn, win_size, n_save):
+#     win = get_window(n_save, win_size)
+#     if len(spec_all.shape) == 2:
+#         win = win[None, ...]
+#     win = win.to(spec_all.device)
 
-    fni = int(fn)
-    idx_from = torch.arange(fni, fni + n_save)
-    idx_from -= n_save // 2
-    idx_from %= spec_all.shape[-1]
+#     fni = int(fn)
+#     idx_from = torch.arange(fni, fni + n_save)
+#     idx_from -= n_save // 2
+#     idx_from %= spec_all.shape[-1]
 
-    idx_to = torch.arange(0, n_save)
-    idx_to -= n_save // 2
-    idx_to %= n_save
+#     idx_to = torch.arange(0, n_save)
+#     idx_to -= n_save // 2
+#     idx_to %= n_save
 
-    spec = win * spec_all[..., idx_from[idx_to]]
+#     spec = win * spec_all[..., idx_from[idx_to]]
 
-    return spec
+#     return spec
 
 
 def mel_to_freq(mel):
@@ -59,213 +49,337 @@ def freq_to_mel(freq):
         freq = torch.tensor(freq)
     return 1127 * torch.log(1 + freq / 700)
 
-def get_mel_n_feats(mel_min, mel_max, fstep, superres):
-    mel_mid = (mel_min + mel_max) / 2
-    freq_mid = mel_to_freq(mel_mid)
-    dmel = mel_mid - freq_to_mel(freq_mid / fstep)
-    n_feats = int((mel_max - mel_min) / dmel) * superres
+# def get_mel_n_feats(mel_min, mel_max, fstep, superres):
+#         mel_mid = (mel_min + mel_max) / 2
+#         freq_mid = mel_to_freq(mel_mid)
+#         dmel = mel_mid - freq_to_mel(freq_mid / fstep)
+#         n_feats = int((mel_max - mel_min) / dmel) * superres
 
-    return n_feats
+#         return n_feats
 
-def get_n_freqs(fmin=MIN_FREQ, fmax=MAX_FREQ, fstep=FREQ_STEP, superres=FREQ_RES):
-    if MEL_N_FEATS is not None:
-        return MEL_N_FEATS
+# def get_n_freqs(fmin=MIN_FREQ, fmax=MAX_FREQ, fstep=FREQ_STEP, superres=FREQ_RES):
+#     if MEL_N_FEATS is not None:
+#         return MEL_N_FEATS
 
-    mel_min = freq_to_mel(fmin)
-    mel_max = freq_to_mel(fmax)
+#     mel_min = freq_to_mel(fmin)
+#     mel_max = freq_to_mel(fmax)
 
-    n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
-    return n_feats
-
-def freq_to_sample(freq, fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
-    mel_min = freq_to_mel(fmin)
-    mel_max = freq_to_mel(fmax)
-    mel_x = freq_to_mel(freq)
-
-    if n_feats is None:
-        n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
-
-    fn = (mel_x - mel_min) / (mel_max - mel_min) * n_feats
-    return fn
+#     n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
+#     return n_feats
 
 
-def sample_to_freq(fn, fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=None, fstep=FREQ_STEP, superres=FREQ_RES):
-    mel_min = freq_to_mel(fmin)
-    mel_max = freq_to_mel(fmax)
+class SpectrogramBuilder(nn.Module):
+    def __init__(self, 
+                 sample_rate: float, 
+                 fsave: float = 500,
+                 n_feats: int = 128,
+                 hear_sense_threshold: float = 1e-2):
+        super().__init__()
 
-    if n_feats is None:
-        n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
+        self.sample_rate = sample_rate
+        self.fsave = fsave
+        self.hear_sense_threshold = hear_sense_threshold
+        self.n_feats = n_feats
 
-    mel_x = fn / n_feats * (mel_max - mel_min) + mel_min
-    freq = mel_to_freq(mel_x)
+        self.fmin = 0
+        self.fmax = sample_rate / 2
+        self.freq_res = n_feats / 64
 
-    return freq
+        self.build_kernel()
 
+    def build_kernel(self):
+        fn = self.get_mel_scale()
+        df = torch.gradient(fn)[0] * self.freq_res
 
-def get_mel_scale(fmin=MIN_FREQ, fmax=MAX_FREQ, n_feats=MEL_N_FEATS, fstep=FREQ_STEP, superres=FREQ_RES):
-    mel_min = freq_to_mel(fmin)
-    mel_max = freq_to_mel(fmax)
+        win_size_T = 1.5 / torch.min(df)
 
-    if n_feats is None:
-        n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
+        t = torch.arange(0, win_size_T, 1 / self.sample_rate) - win_size_T / 2
 
-    mels = torch.linspace(mel_min, mel_max, n_feats)
-    freqs = mel_to_freq(mels)
+        W = (
+            1 / math.sqrt(len(t)) * 
+            torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
+        )
 
-    return freqs
+        ksize = W.shape[-1]
+        stride = int(self.sample_rate / self.fsave)
 
+        windows = self.get_window(W.shape[-1], (self.sample_rate / df)[:, None], W.shape[-1] // 2)
+        mask = self.get_window_mask(ksize, stride, windows)
 
-def get_log_scale(fmin, fmax, fstep, superres=1):
-    log_min = np.log(fmin)
-    log_max = np.log(fmax)
-    log_step = np.log(fstep) / superres
+        W_enc = W * windows
 
-    logs = np.arange(log_min, log_max, log_step)
-    freqs = np.exp(logs)
-    return freqs
+        W_dec = W * windows / mask
 
+        # plt.imshow(self.complex_picture(W))
+        # plt.savefig("kernel.png")
+        # plt.close()
 
-def to_freq_diff_repr(spectrum: torch.Tensor) -> torch.Tensor:
-    df = spectrum.angle()
+        self.kernel_encode = torch.concat([
+            W_enc.real,
+            W_enc.imag
+        ], dim=0)[:, None, :]
 
-    df = df.diff(1, -2, prepend=torch.zeros_like(df[..., :1, :]))
-    # df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :, :1]))
-    df = torch.atan2(df.sin(), df.cos())
-    # df[0, :] = 0
+        self.kernel_decode = torch.concat([
+            W_dec.real,
+            W_dec.imag
+        ], dim=0)[:, None, :]
 
-    ampl = spectrum.abs()
+    def encode(self, signal: torch.Tensor) -> torch.Tensor:
+        sig_shape = signal.shape
+        sig_len = signal.shape[-1]
+        ksize = self.kernel_encode.shape[-1]
+        stride = int(self.sample_rate / self.fsave)
 
-    spectrum = (
-        ampl *
-        torch.exp(1j * df)
-    )
+        x = signal.reshape(-1, 1, sig_len)
 
-    return spectrum
+        spec = F.conv1d(
+            x, 
+            weight=self.kernel_encode, 
+            bias=None, 
+            stride=stride,
+            padding=(ksize - 1)//2,
+        )
 
+        spec_real, spec_imag = spec.chunk(2, dim=1)
+        spec = torch.complex(spec_real, spec_imag)
 
-def from_freq_diff_repr(spectrum: torch.Tensor) -> torch.Tensor:
-    df = spectrum.angle()
+        spec = self.to_freq_diff_repr(spec)
+        spec = self.to_bel_scale(spec)
 
-    # df[0, :] = 0
-    # df = df.cumsum(-1)
-    df = df.cumsum(-2)
+        spec = spec.reshape(sig_shape[:-2] + spec.shape[-2:])
 
-    ampl = spectrum.abs()
-
-    spectrum = (
-        ampl *
-        torch.exp(1j * df)
-    )
-
-    return spectrum
-
-
-def to_bel_scale(spectrum, hear_sense_threshold=HEAR_SENSE_THRESHOLD) -> torch.Tensor:
-    ampl = spectrum.abs()
-    ampl = torch.log10(1 + ampl / hear_sense_threshold)
-
-    spectrum = (
-        ampl *
-        torch.exp(1j * spectrum.angle())
-    )
-
-    return spectrum
-
-
-def from_bel_scale(spectrum) -> torch.Tensor:
-    ampl = spectrum.abs()
-    ampl = HEAR_SENSE_THRESHOLD * (torch.pow(10, ampl) - 1)
-
-    spectrum = (
-        ampl *
-        torch.exp(1j * spectrum.angle())
-    )
-
-    return spectrum
-
-
-def build_spectrogram(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
-    if not isinstance(x, torch.Tensor):
-        x = torch.tensor(x)
-
-    x_len = x.shape[-1]
-
-    n_save = int(x_len * fsave / sample_rate)
-    spec_all = torch.fft.fft(x, dim=-1)
-    spec_all_freq_res = sample_rate / spec_all.shape[-1]
-    fn = get_mel_scale(fmin, fmax) / spec_all_freq_res
-    df = torch.gradient(fn)[0] * FREQ_RES
-
-    log_spec = []
-    for i in range(len(fn)):
-        spec = get_subset(spec_all, fn[i], df[i], n_save)
-        ampl = torch.fft.ifft(spec, dim=-1)
-        log_spec.append(ampl)
-    log_spec = torch.stack(log_spec, dim=-1)
-
-    log_spec = to_freq_diff_repr(log_spec)
-    log_spec = to_bel_scale(log_spec)
-
-    if SAVE_FREQ != REPR_FREQ:
-        t = np.linspace(0, 1, log_spec.shape[-2] - 1)
-        f = interp1d(t, log_spec[..., 1:, :], axis=-2, kind='quadratic')
-        t_new = np.linspace(0, 1, int((log_spec.shape[-2] - 1) * REPR_FREQ / SAVE_FREQ))
-        log_spec = torch.concat([log_spec[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
-
-    return log_spec
-
-
-def set_subset(spec_all, fn, win_size, n_save, spec, weights):
-    win = get_window(n_save, win_size).numpy()
-
-    fni = int(fn)
-    idx_from = np.arange(fni, fni + n_save)
-    idx_from -= n_save // 2
-    idx_from %= spec_all.shape[-1]
-
-    idx_to = np.arange(0, n_save)
-    idx_to -= n_save // 2
-    idx_to %= n_save
-
-    spec_all[idx_from] += spec[idx_to]
-    weights[idx_from] += win[idx_to]
-
-    return spec
-
-
-def generate_sound(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
-    if SAVE_FREQ != REPR_FREQ:
-        t = np.linspace(0, 1, spectrum.shape[-2] - 1)
-        f = interp1d(t, spectrum[..., 1:, :], axis=-2, kind='quadratic')
-        t_new = np.linspace(0, 1, int((spectrum.shape[-2] - 1) * SAVE_FREQ / REPR_FREQ))
-        spectrum = torch.concat([spectrum[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
+        return spec
     
-    n_all = int(len(spectrum) * sample_rate / fsave)
-    n_save = spectrum.shape[0]
+    def decode(self, spec: torch.Tensor) -> torch.Tensor:
+        spec_shape = spec.shape
+        ksize = self.kernel_decode.shape[-1]
+        stride = int(self.sample_rate / self.fsave)
 
-    spec_all_freq_res = sample_rate / n_all
+        spec = spec.reshape(-1, *spec_shape[-2:])
 
-    fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
-    df = np.gradient(fn) * FREQ_RES
+        spec = self.from_bel_scale(spec)
+        spec = self.from_freq_diff_repr(spec)
 
-    spectrum = from_bel_scale(spectrum)
-    spectrum = from_freq_diff_repr(spectrum)
+        spec = torch.concat([
+            spec.real,
+            spec.imag
+        ], dim=1)
 
-    spec_all = np.zeros((n_all,), dtype=np.complex128)
-    weights_all = np.zeros((n_all,), dtype=np.complex128)
+        signal = F.conv_transpose1d(
+            spec, 
+            weight=self.kernel_decode, 
+            bias=None, 
+            stride=stride,
+            padding=(ksize - 1)//2,
+        )
+
+        signal = signal.reshape(*spec_shape[:-2], signal.shape[-1])
+
+        return signal
     
-    for i in range(len(fn)):
-        ampl = spectrum[:,i]
-        spec = np.fft.fft(ampl)
-        set_subset(spec_all, fn[i], df[i], n_save, spec, weights_all)
-    spec_all[len(spec_all) // 2:] = 0
+    def get_window(self, n_save, win_size, shift=0):
+        window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
 
-    # plt.plot(weights_all)
-    # plt.savefig("window.png")
-    # plt.close()
+        prob_outside = 1e-2
+        std = (win_size / 2) / erfinv(1 - prob_outside)
+        window = torch.exp(-0.5 * torch.square(window / std))
+        window -= window.min()
+        window /= window.max()
 
-    spec_all /= weights_all.clip(weights_all.max() / 5, None)
-    spec_all[1:] += np.conj(spec_all)[1:][::-1]
-    track = np.fft.ifft(spec_all)
-    track = np.real(track)
-    return track
+        return window
+
+    def get_window_mask(self, ksize, stride, windows):
+        center = ksize // 2
+        idxs = torch.concatenate([
+            torch.arange(center, 0, -stride)[1:].__reversed__() - center,
+            torch.arange(center, ksize, stride) - center,
+        ])
+
+        mask = torch.zeros(windows.shape, dtype=torch.float32)
+
+        for i in idxs:
+            mask[:, max(i, 0): min(ksize + i, ksize)] += windows[:, max(-i, 0): min(ksize - i, ksize)]
+
+        # plt.plot((windows / mask).T)
+        # plt.savefig("mask.png")
+        # plt.close()
+
+        return mask
+
+    def freq_to_sample(self, freq):
+        mel_min = freq_to_mel(self.fmin)
+        mel_max = freq_to_mel(self.fmax)
+        mel_x = freq_to_mel(freq)
+
+        fn = (mel_x - mel_min) / (mel_max - mel_min) * self.n_feats
+        return fn
+
+    def sample_to_freq(self, fn):
+        mel_min = freq_to_mel(self, self.fmin)
+        mel_max = freq_to_mel(self, self.fmax)
+
+        mel_x = fn / self.n_feats * (mel_max - mel_min) + mel_min
+        freq = mel_to_freq(mel_x)
+
+        return freq
+
+    def get_mel_scale(self):
+        mel_min = freq_to_mel(self.fmin)
+        mel_max = freq_to_mel(self.fmax)
+
+        mels = torch.linspace(mel_min, mel_max, self.n_feats)
+        freqs = mel_to_freq(mels)
+
+        return freqs
+
+    def to_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
+        f = self.get_mel_scale()
+        t = torch.arange(0, spectrum.shape[-1] / self.fsave, 1 / self.fsave)
+        phase0 = torch.exp(2j * torch.pi * f[:, None] * t[None, :])
+
+        spectrum = spectrum * phase0
+
+        df = spectrum.angle()
+
+        df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
+        # df = torch.atan2(df.sin(), df.cos())
+        # df[0, :] = 0
+
+        ampl = spectrum.abs()
+
+        spectrum = (
+            ampl *
+            torch.exp(1j * df)
+        )
+
+        return spectrum
+
+    def from_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
+        df = spectrum.angle()
+
+        # df[0, :] = 0
+        df = df.cumsum(-1)
+
+        ampl = spectrum.abs()
+
+        spectrum = (
+            ampl *
+            torch.exp(1j * df)
+        )
+
+        f = self.get_mel_scale()
+        t = torch.arange(0, spectrum.shape[-1] / self.fsave, 1 / self.fsave)
+        phase0 = torch.exp(-2j * torch.pi * f[:, None] * t[None, :])
+        spectrum = spectrum * phase0
+
+        return spectrum
+
+    def to_bel_scale(self, spectrum) -> torch.Tensor:
+        ampl = spectrum.abs()
+        ampl = torch.log10(1 + ampl / self.hear_sense_threshold)
+
+        spectrum = (
+            ampl *
+            torch.exp(1j * spectrum.angle())
+        )
+
+        return spectrum
+
+    def from_bel_scale(self, spectrum) -> torch.Tensor:
+        ampl = spectrum.abs()
+        ampl = self.hear_sense_threshold * (torch.pow(10, ampl) - 1)
+
+        spectrum = (
+            ampl *
+            torch.exp(1j * spectrum.angle())
+        )
+
+        return spectrum
+    
+    def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std"] = "std"):
+        ampl = spectrum.abs()
+        if ampl_cap == "std":
+            ampl /= ampl.std() * 3
+        elif ampl_cap == "max":
+            ampl /= ampl.max()
+
+        phase = spectrum.angle()
+
+        image = torch.stack([
+            (phase + torch.pi).rad2deg(),
+            (1 - ampl).clip(None, 0).exp(),
+            ampl * 255 / 256
+        ], dim=-1).float().numpy()
+
+        image = cv.cvtColor(image, cv.COLOR_HSV2RGB)
+
+        return image
+
+
+# def build_spectrogram(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
+#     if not isinstance(x, torch.Tensor):
+#         x = torch.tensor(x)
+
+#     x_len = x.shape[-1]
+
+#     n_save = int(x_len * fsave / sample_rate)
+#     spec_all = torch.fft.fft(x, dim=-1)
+#     spec_all_freq_res = sample_rate / spec_all.shape[-1]
+#     fn = get_mel_scale(fmin, fmax) / spec_all_freq_res
+#     df = torch.gradient(fn)[0] * FREQ_RES
+
+#     log_spec = []
+#     for i in range(len(fn)):
+#         spec = get_subset(spec_all, fn[i], df[i], n_save)
+#         log_spec.append(spec)
+#     log_spec = torch.stack(log_spec, dim=-1)
+#     log_spec = torch.fft.ifft(log_spec, dim=-2)
+
+#     log_spec = to_freq_diff_repr(log_spec)
+#     log_spec = to_bel_scale(log_spec)
+
+#     if SAVE_FREQ != REPR_FREQ:
+#         t = np.linspace(0, 1, log_spec.shape[-2] - 1)
+#         f = interp1d(t, log_spec[..., 1:, :], axis=-2, kind='quadratic')
+#         t_new = np.linspace(0, 1, int((log_spec.shape[-2] - 1) * REPR_FREQ / SAVE_FREQ))
+#         log_spec = torch.concat([log_spec[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
+
+#     return log_spec
+
+
+# def generate_sound(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
+#     if SAVE_FREQ != REPR_FREQ:
+#         t = np.linspace(0, 1, spectrum.shape[-2] - 1)
+#         f = interp1d(t, spectrum[..., 1:, :], axis=-2, kind='quadratic')
+#         t_new = np.linspace(0, 1, int((spectrum.shape[-2] - 1) * SAVE_FREQ / REPR_FREQ))
+#         spectrum = torch.concat([spectrum[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
+    
+#     n_all = int(len(spectrum) * sample_rate / fsave)
+#     n_save = spectrum.shape[0]
+
+#     spec_all_freq_res = sample_rate / n_all
+
+#     fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
+#     df = np.gradient(fn) * FREQ_RES
+
+#     spectrum = from_bel_scale(spectrum)
+#     spectrum = from_freq_diff_repr(spectrum)
+
+#     spec_all = np.zeros((n_all,), dtype=np.complex128)
+#     weights_all = np.zeros((n_all,), dtype=np.complex128)
+    
+#     for i in range(len(fn)):
+#         ampl = spectrum[:,i]
+#         spec = np.fft.fft(ampl)
+#         set_subset(spec_all, fn[i], df[i], n_save, spec, weights_all)
+#     spec_all[len(spec_all) // 2:] = 0
+
+#     # plt.plot(weights_all)
+#     # plt.savefig("window.png")
+#     # plt.close()
+
+#     spec_all /= weights_all.clip(weights_all.max() / 5, None)
+#     spec_all[1:] += np.conj(spec_all)[1:][::-1]
+#     track = np.fft.ifft(spec_all)
+#     track = np.real(track)
+#     return track

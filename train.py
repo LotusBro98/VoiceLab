@@ -11,8 +11,7 @@ from scipy.io.wavfile import write
 
 from dataset import AudioDataset
 from model import Autoencoder
-from display import render_plot, complex_picture
-from process import generate_sound
+from process import SpectrogramBuilder
 
 
 def main():
@@ -41,21 +40,21 @@ def main():
     random.seed(42)
     chunk, spec, sample_rate = random.choice(dataset)
 
+    builder = SpectrogramBuilder(sample_rate)
+
     with torch.no_grad():
         spec, spec_pred = autoencoder(spec[None, :])
         spec, spec_pred = spec[0], spec_pred[0]
 
     f, ax = plt.subplots(3, 1, figsize=(20, 20))
-    ax[0].imshow(complex_picture(spec.T)[::-1])
-    ax[1].imshow(complex_picture(spec_pred.T)[::-1])
-    ax[2].imshow(complex_picture((spec - spec_pred).T)[::-1])
+    ax[0].imshow(builder.complex_picture(spec)[::-1], aspect=5)
+    ax[1].imshow(builder.complex_picture(spec_pred)[::-1], aspect=5)
+    ax[2].imshow(builder.complex_picture((spec - spec_pred))[::-1], aspect=5)
     plt.savefig("complex_picture.png")
     plt.close()
 
-    render_plot(spec_pred, 0, sample_rate)
-
-    track = generate_sound(spec, sample_rate)
-    track_pred = generate_sound(spec_pred, sample_rate)
+    track = builder.decode(spec).numpy()
+    track_pred = builder.decode(spec_pred).numpy()
 
     write("track.wav", sample_rate, (track_pred*2**31).astype(np.int32))
     write("orig_back.wav", sample_rate, (track*2**31).astype(np.int32))

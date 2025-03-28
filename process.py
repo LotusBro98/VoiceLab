@@ -146,7 +146,7 @@ class SpectrogramBuilder(nn.Module):
         spec = self.to_freq_diff_repr(spec)
         spec = self.to_bel_scale(spec)
 
-        spec = spec.reshape(sig_shape[:-2] + spec.shape[-2:])
+        spec = spec.reshape(sig_shape[:-1] + spec.shape[-2:])
 
         return spec
     

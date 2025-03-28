@@ -7,7 +7,6 @@ from torch import optim
 import pytorch_lightning as pl
 import torch.nn.functional as F
 
-from process import to_bel_scale
 from special_layers import GradientReverse
 
 
@@ -143,8 +142,6 @@ class Encoder(nn.Module):
         )
 
     def forward(self, spectrogram: torch.Tensor):
-        spectrogram = spectrogram.transpose(-1, -2)
-
         x = torch.concat([
             spectrogram.real,
             spectrogram.imag
@@ -216,8 +213,6 @@ class Decoder(nn.Module):
         spec_real, spec_imag = x.chunk(2, dim=1)
         spectrogram = torch.complex(spec_real, spec_imag)
 
-        spectrogram = spectrogram.transpose(-1, -2)
-
         return spectrogram
     
 
@@ -260,7 +255,6 @@ class Discriminator(nn.Module):
 
     def forward(self, *args: torch.Tensor):
         spectrogram = torch.concat(args, dim=0)
-        spectrogram = spectrogram.transpose(-1, -2)
 
         x = torch.concat([
             spectrogram.real,
@@ -302,7 +296,6 @@ class Autoencoder(pl.LightningModule):
 
     @torch.no_grad
     def normalize_input(self, spec):
-        spec = spec.transpose(1, -1)
         spec = torch.concat([
             spec.real,
             spec.imag
@@ -312,12 +305,10 @@ class Autoencoder(pl.LightningModule):
 
         spec_real, spec_imag = spec.chunk(2, dim=1)
         spec = torch.complex(spec_real, spec_imag)
-        spec = spec.transpose(1, -1)
         return spec
     
     @torch.no_grad
     def denormalize_output(self, spec):
-        spec = spec.transpose(1, -1)
         spec = torch.concat([
             spec.real,
             spec.imag
@@ -329,7 +320,6 @@ class Autoencoder(pl.LightningModule):
         
         spec_real, spec_imag = spec.chunk(2, dim=1)
         spec = torch.complex(spec_real, spec_imag)
-        spec = spec.transpose(1, -1)
         return spec
 
     def forward(self, spectrogram: torch.Tensor, norm=True, crop=True):
@@ -345,8 +335,9 @@ class Autoencoder(pl.LightningModule):
             spectrogram = self.denormalize_output(spectrogram)
 
         if crop:
-            pad = spectrogram.shape[1] - reconstructed_spec.shape[1]
-            spectrogram = spectrogram[:, pad // 2: spectrogram.shape[1] - (pad - pad // 2), :]
+            pad = spectrogram.shape[-1] - reconstructed_spec.shape[-1]
+            # spectrogram = spectrogram[..., pad // 2: spectrogram.shape[-1] - (pad - pad // 2)]
+            spectrogram = spectrogram[..., :spectrogram.shape[-1] - pad]
         return spectrogram, reconstructed_spec
     
     def training_step(self, batch: torch.Tensor, batch_idx):

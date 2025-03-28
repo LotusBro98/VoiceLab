@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from process import build_spectrogram, get_n_freqs
+from process import SpectrogramBuilder
 
 class AudioDataset(Dataset):
     def __init__(self, paths: List[str], chunk_len: float = 5):
@@ -24,7 +24,10 @@ class AudioDataset(Dataset):
                 self.chunks.append(chunk)
 
         self.chunks = torch.from_numpy(np.stack(self.chunks, axis=0))
-        self.spec = build_spectrogram(self.chunks, sample_rate)
+
+        self.builder = SpectrogramBuilder(sample_rate)
+
+        self.spec = self.builder.encode(self.chunks)
         self.sample_rate = sample_rate
 
 
@@ -41,4 +44,4 @@ class AudioDataset(Dataset):
         return len(self.chunks) * 100
     
     def get_n_freqs(self):
-        return get_n_freqs()
+        return self.builder.n_feats

@@ -95,10 +95,7 @@ class SpectrogramBuilder(nn.Module):
 
         t = torch.arange(0, win_size_T, 1 / self.sample_rate) - win_size_T / 2
 
-        W = (
-            1 / math.sqrt(len(t)) * 
-            torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
-        )
+        W = torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
 
         ksize = W.shape[-1]
         stride = int(self.sample_rate / self.fsave)
@@ -106,9 +103,12 @@ class SpectrogramBuilder(nn.Module):
         windows = self.get_window(W.shape[-1], (self.sample_rate / df)[:, None], W.shape[-1] // 2)
         mask = self.get_window_mask(ksize, stride, windows)
 
-        W_enc = W * windows
+        W *= windows
+        W /= W.abs().square().sum(-1, keepdim=True).sqrt()
 
-        W_dec = W * windows / mask
+        W_enc = W
+
+        W_dec = W / mask
 
         # plt.imshow(self.complex_picture(W))
         # plt.savefig("kernel.png")

@@ -36,8 +36,9 @@ track0 = track
 builder = SpectrogramBuilder(sample_rate)
 
 spectrum = builder.encode(torch.tensor(track))
-
 print(spectrum.shape)
+track2 = builder.decode(spectrum)
+spec2 = builder.encode(track2)
 
 # spectrum = build_spectrogram(track, sample_rate)
 
@@ -45,13 +46,15 @@ print(spectrum.shape)
 
 # spectrum += 0.1 * torch.randn_like(spectrum)
 
-plt.figure(figsize=(15, 10))
-plt.imshow(builder.complex_picture(spectrum)[::-1], aspect=5, interpolation="nearest")
+f, ax = plt.subplots(3, figsize=(15, 20))
+ax[0].imshow(builder.complex_picture(spectrum)[::-1], aspect=5, interpolation="nearest")
+ax[1].imshow(builder.complex_picture(spec2)[::-1], aspect=5, interpolation="nearest")
+ax[2].imshow(builder.complex_picture(spec2 - spectrum)[::-1], aspect=5, interpolation="nearest")
 plt.savefig("complex_pic.png")
 plt.close()
 
 # render_plot(np.abs(spectrum), 0, sample_rate)
 
-track2 = builder.decode(spectrum).numpy()
-write("track.wav", sample_rate, (track2*2**31).astype(np.int32))
+
+write("track.wav", sample_rate, (track2.numpy()*2**31).astype(np.int32))
 write("orig.wav", sample_rate, (track*2**31).astype(np.int32))

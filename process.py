@@ -179,14 +179,15 @@ class SpectrogramBuilder(nn.Module):
     def get_window(self, n_save, win_size, shift=0):
         window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
 
-        window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
+        # window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
 
-        # prob_outside = 1e-2
-        # std = (win_size / 2) / erfinv(1 - prob_outside)
-        # window = torch.exp(-0.5 * torch.square(window / std))
+        prob_outside = 1e-2
+        std = (win_size / 2) / erfinv(1 - prob_outside)
+        window = torch.exp(-0.5 * torch.square(window / std))
 
         window -= window.abs().min()
-        window /= window.abs().max()
+        window /= window.sum(-1, keepdim=True) / win_size
+        # window /= window.abs().max()
 
         return window
 

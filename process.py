@@ -71,7 +71,7 @@ def freq_to_mel(freq):
 class SpectrogramBuilder(nn.Module):
     def __init__(self, 
                  sample_rate: float, 
-                 fsave: float = 500,
+                 fsave: float = 400,
                  n_feats: int = 128,
                  hear_sense_threshold: float = 1e-2):
         super().__init__()
@@ -83,15 +83,14 @@ class SpectrogramBuilder(nn.Module):
 
         self.fmin = 0
         self.fmax = sample_rate / 2
-        self.freq_res = n_feats / 64
 
         self.build_kernel()
 
     def build_kernel(self):
         fn = self.get_mel_scale()
-        df = torch.gradient(fn)[0] * self.freq_res
+        df = torch.gradient(fn)[0] * 2
 
-        win_size_T = 1.5 / torch.min(df)
+        win_size_T = 2 / torch.min(df)
 
         t = torch.arange(0, win_size_T, 1 / self.sample_rate) - win_size_T / 2
 
@@ -137,7 +136,7 @@ class SpectrogramBuilder(nn.Module):
             weight=self.kernel_encode, 
             bias=None, 
             stride=stride,
-            padding=(ksize - 1)//2,
+            padding=0,
         )
 
         spec_real, spec_imag = spec.chunk(2, dim=1)
@@ -170,7 +169,7 @@ class SpectrogramBuilder(nn.Module):
             weight=self.kernel_decode, 
             bias=None, 
             stride=stride,
-            padding=(ksize - 1)//2,
+            padding=0,
         )
 
         signal = signal.reshape(*spec_shape[:-2], signal.shape[-1])
@@ -180,11 +179,14 @@ class SpectrogramBuilder(nn.Module):
     def get_window(self, n_save, win_size, shift=0):
         window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
 
-        prob_outside = 1e-2
-        std = (win_size / 2) / erfinv(1 - prob_outside)
-        window = torch.exp(-0.5 * torch.square(window / std))
-        window -= window.min()
-        window /= window.max()
+        window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
+
+        # prob_outside = 1e-2
+        # std = (win_size / 2) / erfinv(1 - prob_outside)
+        # window = torch.exp(-0.5 * torch.square(window / std))
+
+        window -= window.abs().min()
+        window /= window.abs().max()
 
         return window
 
@@ -195,7 +197,7 @@ class SpectrogramBuilder(nn.Module):
             torch.arange(center, ksize, stride) - center,
         ])
 
-        mask = torch.zeros(windows.shape, dtype=torch.float32)
+        mask = torch.zeros_like(windows)
 
         for i in idxs:
             mask[:, max(i, 0): min(ksize + i, ksize)] += windows[:, max(-i, 0): min(ksize - i, ksize)]
@@ -233,19 +235,15 @@ class SpectrogramBuilder(nn.Module):
         return freqs
 
     def to_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
-        f = self.get_mel_scale()
-        t = torch.arange(0, spectrum.shape[-1] / self.fsave, 1 / self.fsave)
-        phase0 = torch.exp(2j * torch.pi * f[:, None] * t[None, :])
-
-        spectrum = spectrum * phase0
+        f = self.get_mel_scale() / self.fsave
+        phase0 = torch.exp(2j * torch.pi * f[:, None])
 
         df = spectrum.angle()
+        ampl = spectrum.abs()
 
         df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
-        # df = torch.atan2(df.sin(), df.cos())
-        # df[0, :] = 0
 
-        ampl = spectrum.abs()
+        df = (torch.exp(1j * df) * phase0).angle()
 
         spectrum = (
             ampl *
@@ -255,22 +253,20 @@ class SpectrogramBuilder(nn.Module):
         return spectrum
 
     def from_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
+        f = self.get_mel_scale() / self.fsave
+        phase0 = torch.exp(-2j * torch.pi * f[:, None])
+
         df = spectrum.angle()
-
-        # df[0, :] = 0
-        df = df.cumsum(-1)
-
         ampl = spectrum.abs()
+
+        df = (torch.exp(1j * df) * phase0).angle()
+
+        df = df.cumsum(-1)
 
         spectrum = (
             ampl *
             torch.exp(1j * df)
         )
-
-        f = self.get_mel_scale()
-        t = torch.arange(0, spectrum.shape[-1] / self.fsave, 1 / self.fsave)
-        phase0 = torch.exp(-2j * torch.pi * f[:, None] * t[None, :])
-        spectrum = spectrum * phase0
 
         return spectrum
 
@@ -299,7 +295,7 @@ class SpectrogramBuilder(nn.Module):
     def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std"] = "std"):
         ampl = spectrum.abs()
         if ampl_cap == "std":
-            ampl /= ampl.std() * 3
+            ampl /= ampl.abs().square().mean().sqrt() * 3
         elif ampl_cap == "max":
             ampl /= ampl.max()
 

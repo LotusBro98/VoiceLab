@@ -35,21 +35,26 @@ track0 = track
 
 builder = SpectrogramBuilder(sample_rate)
 
+# f = np.linspace(5000, 5000, len(track), dtype=np.float32)
+# track = (np.sin(np.linspace(0, 1, len(track), dtype=np.float32) * f))
+
 spectrum = builder.encode(torch.tensor(track))
 print(spectrum.shape)
+
+# spectrum *= torch.rand_like(spectrum).abs() < 0.99
+# spectrum += torch.randn_like(spectrum) * 0.001
+
+# spectrum = spectrum[:, 50:-50]
+# spec2 = spec2[50:-50:2]
+# spectrum += 0.1 * torch.randn_like(spectrum)
+
 track2 = builder.decode(spectrum)
 spec2 = builder.encode(track2)
 
-# spectrum = build_spectrogram(track, sample_rate)
-
-# spectrum = spectrum[50:-50]
-
-# spectrum += 0.1 * torch.randn_like(spectrum)
-
 f, ax = plt.subplots(3, figsize=(15, 20))
-ax[0].imshow(builder.complex_picture(spectrum)[::-1], aspect=5, interpolation="nearest")
-ax[1].imshow(builder.complex_picture(spec2)[::-1], aspect=5, interpolation="nearest")
-ax[2].imshow(builder.complex_picture(spec2 - spectrum)[::-1], aspect=5, interpolation="nearest")
+ax[0].imshow(builder.complex_picture(spectrum)[::-1], aspect=1, interpolation="nearest")
+ax[1].imshow(builder.complex_picture(spec2)[::-1], aspect=1, interpolation="nearest")
+ax[2].imshow(builder.complex_picture(spec2 - spectrum)[::-1], aspect=1, interpolation="nearest")
 plt.savefig("complex_pic.png")
 plt.close()
 

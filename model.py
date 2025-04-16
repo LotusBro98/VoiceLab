@@ -89,7 +89,7 @@ class ResNetBlock(nn.Module):
             padding="same" if stride == 1 else (ksize - 1) // 2)
         self.conv3 = nn.Conv1d(cmid, cin, kernel_size=ksize, padding="same", bias=False)
         self.conv_short = (
-            nn.Identity() if stride == 1 else
+            nn.Identity() if stride == 1 and cin == cout else
             nn.Upsample(scale_factor=stride if up else 1 / stride) if cin == cout else
             nn.ConvTranspose1d(cin, cout, 1, stride=stride, bias=False) if up else
             nn.Conv1d(cin, cout, 1, stride=stride, bias=False)
@@ -99,7 +99,7 @@ class ResNetBlock(nn.Module):
         self.norm1 = norm_class()
         self.norm2 = norm_class()
         self.norm3 = norm_class()
-        self.norm_short = nn.Identity() if stride == 1 or cin == cout else norm_class()
+        self.norm_short = nn.Identity() if cin == cout else norm_class()
 
         self.act_mid = nn.LeakyReLU(0.2) if act_mid == "leakyrelu" else nn.ReLU()
         self.act_out = nn.ReLU() if act_out == "relu" else nn.LeakyReLU(0.2) if act_out == "leakyrelu" else nn.Identity()
@@ -154,7 +154,7 @@ class Encoder(nn.Module):
             # ResNetBlock(d_model, ksize=ksize),
 
             ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
-            # ResNetBlock(d_model, ksize=ksize, act=False),
+            # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
 
             ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
@@ -385,7 +385,7 @@ class Autoencoder(pl.LightningModule):
 
         opt_g = optim.AdamW(self.parameters(), lr=base_lr, weight_decay=0.01)
 
-        T1 = 100
+        T1 = 500
         Tall = self.trainer.estimated_stepping_batches
         sch_g = optim.lr_scheduler.SequentialLR(opt_g, [
             optim.lr_scheduler.LinearLR(opt_g, 1 / T1, 1, total_iters=T1),

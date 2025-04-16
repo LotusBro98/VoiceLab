@@ -41,7 +41,7 @@ builder = SpectrogramBuilder(sample_rate)
 spectrum = builder.encode(torch.tensor(track))
 print(spectrum.shape)
 
-# spectrum *= torch.rand_like(spectrum).abs() < 0.99
+# spectrum *= torch.rand_like(spectrum.abs()) < 0.9
 # spectrum += torch.randn_like(spectrum) * 0.001
 
 # spectrum = spectrum[:, 50:-50]

@@ -1,6 +1,6 @@
 from itertools import chain
 import math
-from typing import Literal
+from typing import Literal, Optional
 import torch
 from torch import nn
 from torch import optim
@@ -14,6 +14,7 @@ class Downsample(nn.Module):
     def __init__(self, cin: int, cout: int, ksize: int = 3, stride: int = 2, 
                  norm: Literal["batch", "instance", "none", None] = "batch", 
                  act: Literal["relu", "leakyrelu", "none", None] = "relu", 
+                 bias: Optional[bool] = None,
                  dropout=0):
         super().__init__()
 
@@ -23,7 +24,7 @@ class Downsample(nn.Module):
             kernel_size=ksize,
             stride=stride,
             padding=(ksize - 1) // 2,
-            bias=not norm
+            bias=(not norm) if bias is None else bias
         )
         self.norm = nn.LazyBatchNorm1d() if norm == "batch" else nn.LazyInstanceNorm1d() if norm == "instance" else nn.Identity()
         self.act = nn.ReLU() if act == "relu" else nn.LeakyReLU(0.2) if act == "leakyrelu" else nn.Identity()
@@ -53,34 +54,50 @@ class Upsample(nn.Module):
         self.norm = nn.LazyInstanceNorm1d() if norm else nn.Identity()
         self.act = nn.ReLU() if act else nn.Identity()
 
-        # self.upsample = nn.Upsample(scale_factor=2)
+        self.upsample = nn.Upsample(scale_factor=2)
 
     def forward(self, x):
+        x0 = x
+
         x = self.conv(x)
         x = self.norm(x)
+
+        x = x + self.upsample(x0)[..., :x.shape[-1]]
+
         x = self.act(x)
-        # x = self.upsample(x)
 
         return x
 
 
 class ResNetBlock(nn.Module):
-    def __init__(self, cin, bottleneck=1, ksize=3,
-                 norm: Literal["batch", "instance", "none", None] = "batch", 
-                 act: Literal["relu", "leakyrelu", "none", None] = "relu",  
-                 dropout=0):
+    def __init__(self, cin, cout=None, bottleneck=1, ksize=3, stride=1,
+                 norm: Literal["batch", "instance", "none", None] = "batch",
+                 act: Literal["relu", "leakyrelu", "none", None] = "relu",
+                 dropout=0, up=False):
         super().__init__()
-        cmid = int(cin * bottleneck)
+        if cout is None:
+            cout = cin
+        cmid = int(max(cin, cout) * bottleneck)
 
         norm_class = nn.LazyBatchNorm1d if norm == "batch" else nn.LazyInstanceNorm1d if norm == "instance" else nn.Identity
 
         self.conv1 = nn.Conv1d(cin, cmid, kernel_size=ksize, padding="same", bias=False)
-        self.conv2 = nn.Conv1d(cmid, cmid, kernel_size=ksize, padding="same", bias=False)
+        self.conv2 = (nn.ConvTranspose1d if up else nn.Conv1d)(
+            cmid, cmid, kernel_size=ksize, stride=stride, bias=False,
+            padding="same" if stride == 1 else (ksize - 1) // 2)
         self.conv3 = nn.Conv1d(cmid, cin, kernel_size=ksize, padding="same", bias=False)
+        self.conv_short = (
+            nn.Identity() if stride == 1 else
+            nn.Upsample(scale_factor=stride if up else 1 / stride) if cin == cout else
+            nn.ConvTranspose1d(cin, cout, 1, stride=stride, bias=False) if up else
+            nn.Conv1d(cin, cout, 1, stride=stride, bias=False)
+        )
+
 
         self.norm1 = norm_class()
         self.norm2 = norm_class()
         self.norm3 = norm_class()
+        self.norm_short = nn.Identity() if stride == 1 or cin == cout else norm_class()
 
         self.act = nn.ReLU() if act == "relu" else nn.LeakyReLU(0.2) if act == "leakyrelu" else nn.Identity()
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
@@ -102,7 +119,10 @@ class ResNetBlock(nn.Module):
         x = self.conv3(x)
         x = self.norm3(x)
 
-        x = x + x0
+        x0 = self.conv_short(x0)
+        x0 = self.norm_short(x0)
+        x = x + x0[..., :x.shape[-1]]
+
         x = self.act(x)
 
         return x
@@ -112,23 +132,28 @@ class Encoder(nn.Module):
     def __init__(self, n_freqs: int):
         super().__init__()
 
-        d_emb = 256
+        d_emb = 512
         d_model = 512
         ksize = 3
         ksize_in = 7
         stride_in = 1
 
-        self.in_conv = Downsample(2 * n_freqs, d_model, ksize=ksize_in, stride=stride_in, norm="none", act="none")
+        self.in_conv = nn.Sequential(
+            # Downsample(2 * n_freqs, d_model, ksize=ksize_in, stride=stride_in, norm="none", act="none")
+            nn.Conv1d(2 * n_freqs, d_model, kernel_size=ksize_in, stride=stride_in, bias=False, padding=ksize_in//2),
+            # nn.LazyBatchNorm1d()
+        )
 
         self.blocks = nn.ModuleList([
-            ResNetBlock(d_model, ksize=ksize),
-
-            Downsample(d_model, d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-
-            # Downsample(d_model, d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
+
+            # Downsample(d_model, d_model, ksize=ksize, act=False),
+            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, act=False),
+            # ResNetBlock(d_model, ksize=ksize, act=False),
+            # ResNetBlock(d_model, ksize=ksize),
+
+            # Downsample(d_model, d_model, ksize=ksize, act=False),
+            # ResNetBlock(d_model, ksize=ksize, act=False),
             # ResNetBlock(d_model, ksize=ksize),
 
             # Downsample(d_model, d_model, ksize=ksize),
@@ -161,7 +186,7 @@ class Decoder(nn.Module):
     def __init__(self, n_freqs: int):
         super().__init__()
 
-        d_emb = 256
+        d_emb = 512
         d_model = 512
         ksize_out = 7
         stride_out = 1
@@ -170,7 +195,7 @@ class Decoder(nn.Module):
         self.in_conv = nn.Sequential(
             nn.Conv1d(d_emb, d_model, bias=False, kernel_size=1),
             nn.LazyBatchNorm1d(),
-            nn.ReLU(),
+            # nn.ReLU(),
         )
 
         self.blocks = nn.ModuleList([
@@ -183,15 +208,16 @@ class Decoder(nn.Module):
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             
-            # Upsample(d_model, d_model, ksize=ksize),
+            # Upsample(d_model, d_model, ksize=ksize, act=False),
+            # ResNetBlock(d_model, ksize=ksize, act=False),
+            # ResNetBlock(d_model, ksize=ksize, act=False),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
 
-            Upsample(d_model, d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
-            ResNetBlock(d_model, ksize=ksize),
+            # Upsample(d_model, d_model, ksize=ksize, act=False),
+            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True, act=False)
+            # ResNetBlock(d_model, ksize=ksize, act=False),
+            # ResNetBlock(d_model, ksize=ksize, act=False),
             # ResNetBlock(d_model, ksize=ksize),
 
             # ResNetBlock(d_model, ksize=ksize, norm=False),
@@ -199,7 +225,7 @@ class Decoder(nn.Module):
 
         self.out_conv = nn.Sequential(
             nn.ConvTranspose1d(d_model, 2 * n_freqs, kernel_size=ksize_out, stride=stride_out, bias=False, padding=ksize_out//2),
-            # nn.LazyInstanceNorm1d(affine=False)
+            # nn.LazyBatchNorm1d(affine=False)
         )
 
     def forward(self, x: torch.Tensor):
@@ -221,29 +247,24 @@ class Discriminator(nn.Module):
         super().__init__()
 
         d_model = 512
-        ksize_in = 7
-        stride_in = 2
+        ksize_in = 3
+        stride_in = 1
+        stride = 1
         ksize = 3
 
-        self.in_conv = Downsample(2 * n_freqs, d_model, ksize=ksize_in, stride=stride_in, norm="instance", act="none")
+        self.in_conv = Downsample(2 * n_freqs, d_model, ksize=ksize_in, stride=stride_in, norm="instance", bias=False, act="leakyrelu")
 
         self.blocks = nn.ModuleList([
             # ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # Downsample(d_model, d_model, ksize=ksize, stride=stride, norm="instance", act="leakyrelu"),
             # ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # Downsample(d_model, d_model, ksize=ksize, stride=stride, norm="instance", act="leakyrelu"),
             # ResNetBlock(d_model, ksize=ksize),
 
-            Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
+            # Downsample(d_model, d_model, ksize=ksize, stride=stride, norm="instance", act="leakyrelu"),
             # ResNetBlock(d_model, ksize=ksize),
-
-            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
-            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
-            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
-            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
-            # Downsample(d_model, d_model, ksize=ksize, norm="instance", act="leakyrelu"),
         ])
 
         self.out_conv = nn.Sequential(
@@ -301,7 +322,7 @@ class Autoencoder(pl.LightningModule):
             spec.imag
         ], dim=1)
 
-        # spec = self.in_norm(spec)
+        spec = self.in_norm(spec)
 
         spec_real, spec_imag = spec.chunk(2, dim=1)
         spec = torch.complex(spec_real, spec_imag)
@@ -314,9 +335,9 @@ class Autoencoder(pl.LightningModule):
             spec.imag
         ], dim=1)
 
-        # mean = self.in_norm.running_mean[:, None].detach()
-        # var = self.in_norm.running_var[:, None].sqrt().detach()
-        # spec = spec * var + mean
+        mean = self.in_norm.running_mean[:, None].detach()
+        var = self.in_norm.running_var[:, None].sqrt().detach()
+        spec = spec * var + mean
         
         spec_real, spec_imag = spec.chunk(2, dim=1)
         spec = torch.complex(spec_real, spec_imag)
@@ -336,8 +357,8 @@ class Autoencoder(pl.LightningModule):
 
         if crop:
             pad = spectrogram.shape[-1] - reconstructed_spec.shape[-1]
-            # spectrogram = spectrogram[..., pad // 2: spectrogram.shape[-1] - (pad - pad // 2)]
-            spectrogram = spectrogram[..., :spectrogram.shape[-1] - pad]
+            spectrogram = spectrogram[..., pad // 2: spectrogram.shape[-1] - (pad - pad // 2)]
+            # spectrogram = spectrogram[..., :spectrogram.shape[-1] - pad]
         return spectrogram, reconstructed_spec
     
     def training_step(self, batch: torch.Tensor, batch_idx):
@@ -346,11 +367,11 @@ class Autoencoder(pl.LightningModule):
         spec0 = self.normalize_input(spec)
 
         spec, pred_spec = self(spec0, norm=False)
-        # loss_ae = (spec - pred_spec).abs().square().mean().sqrt() / spec.std()
-        loss_ae = (
-            (pred_spec.real - spec.real).square() / spec.real.std().square() +
-            (pred_spec.imag - spec.imag).square() / spec.imag.std().square()
-        ).mean().sqrt()
+        loss_ae = (spec - pred_spec).abs().square().mean().sqrt() / spec.std()
+        # loss_ae = (
+        #     (pred_spec.real - spec.real).square() / spec.real.std().square() +
+        #     (pred_spec.imag - spec.imag).square() / spec.imag.std().square()
+        # ).mean().sqrt()
         loss_disc = self.discriminator.loss_disc(spec, pred_spec)
         loss = 100 * loss_ae + loss_disc
 
@@ -360,15 +381,15 @@ class Autoencoder(pl.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        base_lr = 1e-4
+        base_lr = 3e-4
 
-        opt_g = optim.Adam(self.parameters(), lr=base_lr)
+        opt_g = optim.AdamW(self.parameters(), lr=base_lr, weight_decay=0.01)
 
         T1 = 100
-        T2 = 20000
+        Tall = self.trainer.estimated_stepping_batches
         sch_g = optim.lr_scheduler.SequentialLR(opt_g, [
             optim.lr_scheduler.LinearLR(opt_g, 1 / T1, 1, total_iters=T1),
-            optim.lr_scheduler.ExponentialLR(opt_g, math.exp(-1 / T2))
+            optim.lr_scheduler.CosineAnnealingLR(opt_g, Tall - 1 - T1),
         ], milestones=[T1])
         sch_g = {
             'scheduler': sch_g,

@@ -37,8 +37,9 @@ def main():
 
     autoencoder.eval()
 
-    random.seed(42)
-    chunk, spec, sample_rate = random.choice(dataset)
+    # random.seed(42)
+    # chunk, spec, sample_rate = random.choice(dataset)
+    chunk, spec, sample_rate = dataset[40]
 
     builder = SpectrogramBuilder(sample_rate)
 

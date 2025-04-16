@@ -7,6 +7,7 @@ from torch import optim
 import pytorch_lightning as pl
 import torch.nn.functional as F
 
+from dataset import AudioDataset
 from special_layers import GradientReverse
 
 
@@ -72,7 +73,8 @@ class Upsample(nn.Module):
 class ResNetBlock(nn.Module):
     def __init__(self, cin, cout=None, bottleneck=1, ksize=3, stride=1,
                  norm: Literal["batch", "instance", "none", None] = "batch",
-                 act: Literal["relu", "leakyrelu", "none", None] = "relu",
+                 act_mid: Literal["relu", "leakyrelu"] = "relu",
+                 act_out: Literal["relu", "leakyrelu", "none", None] = None,
                  dropout=0, up=False):
         super().__init__()
         if cout is None:
@@ -99,31 +101,32 @@ class ResNetBlock(nn.Module):
         self.norm3 = norm_class()
         self.norm_short = nn.Identity() if stride == 1 or cin == cout else norm_class()
 
-        self.act = nn.ReLU() if act == "relu" else nn.LeakyReLU(0.2) if act == "leakyrelu" else nn.Identity()
+        self.act_mid = nn.LeakyReLU(0.2) if act_mid == "leakyrelu" else nn.ReLU()
+        self.act_out = nn.ReLU() if act_out == "relu" else nn.LeakyReLU(0.2) if act_out == "leakyrelu" else nn.Identity()
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
     def forward(self, x):
 
         x0 = x
+        x0 = self.conv_short(x0)
+        x0 = self.norm_short(x0)
 
         x = self.conv1(x)
         x = self.norm1(x)
-        x = self.act(x)
+        x = self.act_mid(x)
         x = self.dropout(x)
 
         x = self.conv2(x)
         x = self.norm2(x)
-        x = self.act(x)
+        x = self.act_mid(x)
         x = self.dropout(x)
 
         x = self.conv3(x)
         x = self.norm3(x)
 
-        x0 = self.conv_short(x0)
-        x0 = self.norm_short(x0)
-        x = x + x0[..., :x.shape[-1]]
+        x = x[..., :x0.shape[-1]] + x0[..., :x.shape[-1]]
 
-        x = self.act(x)
+        x = self.act_out(x)
 
         return x
         
@@ -139,24 +142,22 @@ class Encoder(nn.Module):
         stride_in = 1
 
         self.in_conv = nn.Sequential(
-            # Downsample(2 * n_freqs, d_model, ksize=ksize_in, stride=stride_in, norm="none", act="none")
             nn.Conv1d(2 * n_freqs, d_model, kernel_size=ksize_in, stride=stride_in, bias=False, padding=ksize_in//2),
-            # nn.LazyBatchNorm1d()
+            nn.LazyBatchNorm1d()
         )
 
         self.blocks = nn.ModuleList([
             # ResNetBlock(d_model, ksize=ksize),
 
-            # Downsample(d_model, d_model, ksize=ksize, act=False),
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, act=False),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
             # ResNetBlock(d_model, ksize=ksize, act=False),
             # ResNetBlock(d_model, ksize=ksize),
 
-            # Downsample(d_model, d_model, ksize=ksize, act=False),
+            ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
             # ResNetBlock(d_model, ksize=ksize, act=False),
             # ResNetBlock(d_model, ksize=ksize),
 
-            # Downsample(d_model, d_model, ksize=ksize),
+            ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
         ])
@@ -202,22 +203,21 @@ class Decoder(nn.Module):
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             
-            # Upsample(d_model, d_model, ksize=ksize),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             
-            # Upsample(d_model, d_model, ksize=ksize, act=False),
-            # ResNetBlock(d_model, ksize=ksize, act=False),
-            # ResNetBlock(d_model, ksize=ksize, act=False),
+            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
 
-            # Upsample(d_model, d_model, ksize=ksize, act=False),
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True, act=False)
-            # ResNetBlock(d_model, ksize=ksize, act=False),
-            # ResNetBlock(d_model, ksize=ksize, act=False),
+            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
+            # ResNetBlock(d_model, ksize=ksize),
+            # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
 
             # ResNetBlock(d_model, ksize=ksize, norm=False),
@@ -397,3 +397,22 @@ class Autoencoder(pl.LightningModule):
             'frequency': 1
         }
         return [opt_g], [sch_g]
+
+
+def test():
+    dataset = AudioDataset(["data/podcast.mp3"])
+    autoencoder = Autoencoder(dataset.get_n_freqs())
+
+    chunk, spec, sample_rate = dataset[40]
+
+    autoencoder(spec[None])
+
+    torch.onnx.export(
+        autoencoder.encoder,
+        spec[None],
+        "encoder.onnx"
+    )
+
+if __name__ == "__main__":
+    test()
+

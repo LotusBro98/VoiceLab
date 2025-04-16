@@ -242,9 +242,9 @@ class SpectrogramBuilder(nn.Module):
         df = spectrum.angle()
         ampl = spectrum.abs()
 
-        df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
+        # df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
 
-        df = (torch.exp(1j * df) * phase0).angle()
+        # df = (torch.exp(1j * df) * phase0).angle()
 
         spectrum = (
             ampl *
@@ -260,9 +260,9 @@ class SpectrogramBuilder(nn.Module):
         df = spectrum.angle()
         ampl = spectrum.abs()
 
-        df = (torch.exp(1j * df) * phase0).angle()
+        # df = (torch.exp(1j * df) * phase0).angle()
 
-        df = df.cumsum(-1)
+        # df = df.cumsum(-1)
 
         spectrum = (
             ampl *

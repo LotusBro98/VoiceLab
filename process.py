@@ -305,7 +305,7 @@ class SpectrogramBuilder(nn.Module):
         image = torch.stack([
             (phase + torch.pi).rad2deg(),
             (1 - ampl).clip(None, 0).exp(),
-            ampl * 255 / 256
+            ampl.clip(0, 1),
         ], dim=-1).float().numpy()
 
         image = cv.cvtColor(image, cv.COLOR_HSV2RGB)

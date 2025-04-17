@@ -106,10 +106,7 @@ class ResNetBlock(nn.Module):
         self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
 
     def forward(self, x):
-
         x0 = x
-        x0 = self.conv_short(x0)
-        x0 = self.norm_short(x0)
 
         x = self.conv1(x)
         x = self.norm1(x)
@@ -124,7 +121,15 @@ class ResNetBlock(nn.Module):
         x = self.conv3(x)
         x = self.norm3(x)
 
-        x = x[..., :x0.shape[-1]] + x0[..., :x.shape[-1]]
+        if isinstance(self.conv_short, nn.Upsample):
+            x0 = F.interpolate(x0, x.shape[2:])
+        elif not isinstance(self.conv_short, nn.Identity):
+            x0 = self.conv_short(x0)
+            x = x[..., :x0.shape[-1]]
+            x0 = x0[..., :x.shape[-1]]
+        x0 = self.norm_short(x0)
+
+        x = x + x0
 
         x = self.act_out(x)
 
@@ -165,10 +170,10 @@ class Encoder(nn.Module):
             nn.LazyBatchNorm1d(),
         )
 
-    def forward(self, spectrogram: torch.Tensor):
+    def forward(self, spectrogram_real: torch.Tensor, spectrogram_imag: torch.Tensor):
         x = torch.concat([
-            spectrogram.real,
-            spectrogram.imag
+            spectrogram_real,
+            spectrogram_imag
         ], dim=1)
 
         x = self.in_conv(x)
@@ -233,9 +238,9 @@ class Decoder(nn.Module):
         x = self.out_conv(x)
 
         spec_real, spec_imag = x.chunk(2, dim=1)
-        spectrogram = torch.complex(spec_real, spec_imag)
-
-        return spectrogram
+        return spec_real, spec_imag
+        # spectrogram = torch.complex(spec_real, spec_imag)
+        # return spectrogram
     
 
 class Discriminator(nn.Module):
@@ -343,9 +348,9 @@ class Autoencoder(pl.LightningModule):
         if norm:
             spectrogram = self.normalize_input(spectrogram)
 
-        feats = self.encoder(spectrogram)
+        feats = self.encoder(spectrogram.real, spectrogram.imag)
         # feats = torch.randn_like(feats)
-        reconstructed_spec = self.decoder(feats)
+        reconstructed_spec = torch.complex(*self.decoder(feats))
 
         if norm:
             reconstructed_spec = self.denormalize_output(reconstructed_spec)
@@ -402,11 +407,18 @@ def test():
     chunk, spec, sample_rate = dataset[40]
 
     autoencoder(spec[None])
+    feats = autoencoder.encoder(spec[None].real, spec[None].imag)
 
     torch.onnx.export(
         autoencoder.encoder,
-        spec[None],
+        (spec[None].real, spec[None].imag),
         "encoder.onnx"
+    )
+
+    torch.onnx.export(
+        autoencoder.decoder,
+        feats,
+        "decoder.onnx"
     )
 
 if __name__ == "__main__":

@@ -41,7 +41,7 @@ class AudioDataset(Dataset):
         return chunk, spec, sample_rate
 
     def __len__(self):
-        return len(self.chunks) * 100
+        return len(self.chunks)
     
     def get_n_freqs(self):
         return self.builder.n_feats

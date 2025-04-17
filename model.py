@@ -152,15 +152,15 @@ class Encoder(nn.Module):
         )
 
         self.blocks = nn.ModuleList([
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
 
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
 
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
         ])
@@ -206,19 +206,19 @@ class Decoder(nn.Module):
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
 
-            ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
+            # ResNetBlock(d_model, d_model, ksize=ksize, stride=2, up=True),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),
             # ResNetBlock(d_model, ksize=ksize),

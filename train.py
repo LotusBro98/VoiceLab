@@ -5,6 +5,7 @@ import random
 import numpy as np
 import torch
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from scipy.io.wavfile import write
@@ -28,9 +29,12 @@ def main():
     torch.set_float32_matmul_precision('medium')
     trainer = pl.Trainer(
         # limit_train_batches=10000, 
-        max_epochs=1,
+        max_epochs=100,
         # accelerator="cpu"
-        devices=1
+        devices=1,
+        callbacks=[
+            EarlyStopping("Lae", min_delta=0.01, patience=3)
+        ]
     )
 
     trainer.fit(model=autoencoder, train_dataloaders=train_loader)

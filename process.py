@@ -143,13 +143,6 @@ class SpectrogramBuilder(nn.Module):
 
         spec = spec.reshape(sig_shape[:-1] + spec.shape[-2:])
         return spec
-
-    def encode(self, signal: torch.Tensor) -> torch.Tensor:
-        spec = self._encode_conv(signal)
-
-        # spec = self.to_freq_diff_repr(spec)
-        spec = self.to_bel_scale(spec)
-        return spec
     
     def _decode_conv(self, spec: torch.Tensor) -> torch.Tensor:
         spec_shape = spec.shape
@@ -173,10 +166,27 @@ class SpectrogramBuilder(nn.Module):
         signal = signal.reshape(*spec_shape[:-2], signal.shape[-1])
         return signal
     
+    def reconstruct_phase(self, spec_abs: torch.Tensor) -> torch.Tensor:
+        # Griffin-Lim algorithm for signal reconstruction from magnitude-only spectrogram
+
+        spec = torch.complex(spec_abs, torch.zeros_like(spec_abs))
+        
+        for i in range(20):
+            signal = self._decode_conv(spec)
+            spec = self._encode_conv(signal)
+            spec = spec_abs * torch.exp(1j * spec.angle())
+
+        return spec
+
+    def encode(self, signal: torch.Tensor) -> torch.Tensor:
+        spec = self._encode_conv(signal)
+        spec = spec.abs()
+        spec = self.to_bel_scale(spec)
+        return spec
+    
     def decode(self, spec: torch.Tensor) -> torch.Tensor:
         spec = self.from_bel_scale(spec)
-        # spec = self.from_freq_diff_repr(spec)
-
+        spec = self.reconstruct_phase(spec)
         signal = self._decode_conv(spec)
 
         return signal
@@ -280,23 +290,25 @@ class SpectrogramBuilder(nn.Module):
         ampl = spectrum.abs()
         ampl = torch.log10(1 + ampl / self.hear_sense_threshold)
 
-        spectrum = (
+        if not torch.is_complex(spectrum):
+            return ampl
+        
+        return (
             ampl *
             torch.exp(1j * spectrum.angle())
         )
-
-        return spectrum
 
     def from_bel_scale(self, spectrum) -> torch.Tensor:
         ampl = spectrum.abs()
         ampl = self.hear_sense_threshold * (torch.pow(10, ampl) - 1)
 
-        spectrum = (
+        if not torch.is_complex(spectrum):
+            return ampl
+
+        return (
             ampl *
             torch.exp(1j * spectrum.angle())
         )
-
-        return spectrum
     
     def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std"] = "std"):
         ampl = spectrum.abs()

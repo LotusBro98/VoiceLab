@@ -123,10 +123,9 @@ class SpectrogramBuilder(nn.Module):
             W_dec.imag
         ], dim=0)[:, None, :]
 
-    def encode(self, signal: torch.Tensor) -> torch.Tensor:
+    def _encode_conv(self, signal: torch.Tensor) -> torch.Tensor:
         sig_shape = signal.shape
         sig_len = signal.shape[-1]
-        ksize = self.kernel_encode.shape[-1]
         stride = int(self.sample_rate / self.fsave)
 
         x = signal.reshape(-1, 1, sig_len)
@@ -142,22 +141,21 @@ class SpectrogramBuilder(nn.Module):
         spec_real, spec_imag = spec.chunk(2, dim=1)
         spec = torch.complex(spec_real, spec_imag)
 
-        spec = self.to_freq_diff_repr(spec)
-        spec = self.to_bel_scale(spec)
-
         spec = spec.reshape(sig_shape[:-1] + spec.shape[-2:])
+        return spec
 
+    def encode(self, signal: torch.Tensor) -> torch.Tensor:
+        spec = self._encode_conv(signal)
+
+        # spec = self.to_freq_diff_repr(spec)
+        spec = self.to_bel_scale(spec)
         return spec
     
-    def decode(self, spec: torch.Tensor) -> torch.Tensor:
+    def _decode_conv(self, spec: torch.Tensor) -> torch.Tensor:
         spec_shape = spec.shape
-        ksize = self.kernel_decode.shape[-1]
         stride = int(self.sample_rate / self.fsave)
 
         spec = spec.reshape(-1, *spec_shape[-2:])
-
-        spec = self.from_bel_scale(spec)
-        spec = self.from_freq_diff_repr(spec)
 
         spec = torch.concat([
             spec.real,
@@ -173,17 +171,24 @@ class SpectrogramBuilder(nn.Module):
         )
 
         signal = signal.reshape(*spec_shape[:-2], signal.shape[-1])
+        return signal
+    
+    def decode(self, spec: torch.Tensor) -> torch.Tensor:
+        spec = self.from_bel_scale(spec)
+        # spec = self.from_freq_diff_repr(spec)
+
+        signal = self._decode_conv(spec)
 
         return signal
     
     def get_window(self, n_save, win_size, shift=0):
         window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
 
-        # window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
+        window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
 
-        prob_outside = 1e-2
-        std = (win_size / 2) / erfinv(1 - prob_outside)
-        window = torch.exp(-0.5 * torch.square(window / std))
+        # prob_outside = 1e-2
+        # std = (win_size / 2) / erfinv(1 - prob_outside)
+        # window = torch.exp(-0.5 * torch.square(window / std))
 
         window -= window.abs().min()
         window /= window.sum(-1, keepdim=True) / win_size

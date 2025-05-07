@@ -72,7 +72,7 @@ class SpectrogramBuilder(nn.Module):
     def __init__(self, 
                  sample_rate: float, 
                  fsave: float = 400,
-                 n_feats: int = 128,
+                 n_feats: int = 160,
                  magitude: bool = True,
                  hear_sense_threshold: float = 1e-2):
         super().__init__()
@@ -91,12 +91,6 @@ class SpectrogramBuilder(nn.Module):
     def build_kernel(self):
         fn = self.get_mel_scale()
         df = torch.gradient(fn)[0] * 2
-        if self.magnitude:
-            self.frepr = 2 * max(df).item()
-            print(self.frepr)
-            self.frepr = math.ceil(self.frepr / self.fsave) * self.fsave
-        else:
-            self.frepr = self.fsave
 
         win_size_T = 2 / torch.min(df)
 
@@ -105,7 +99,7 @@ class SpectrogramBuilder(nn.Module):
         W = torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
 
         ksize = W.shape[-1]
-        self.stride = int(self.sample_rate / self.frepr)
+        self.stride = int(self.sample_rate / self.fsave)
 
         windows = self.get_window(W.shape[-1], (self.sample_rate / df)[:, None], W.shape[-1] // 2)
         mask = self.get_window_mask(ksize, self.stride, windows)
@@ -116,10 +110,6 @@ class SpectrogramBuilder(nn.Module):
         W_enc = W
 
         W_dec = W / mask
-
-        # plt.imshow(self.complex_picture(W))
-        # plt.savefig("kernel.png")
-        # plt.close()
 
         self.kernel_encode = torch.concat([
             W_enc.real,
@@ -188,14 +178,12 @@ class SpectrogramBuilder(nn.Module):
         spec = self._encode_conv(signal)
         if self.magnitude:
             spec = spec.abs()
-            # spec = F.interpolate(spec[None], scale_factor=self.fsave / self.frepr, mode="nearest")[0]
         spec = self.to_bel_scale(spec)
         return spec
     
     def decode(self, spec: torch.Tensor) -> torch.Tensor:
         spec = self.from_bel_scale(spec)
         if self.magnitude:
-            # spec = F.interpolate(spec[None], scale_factor=self.frepr / self.fsave, mode="nearest")[0]
             spec = self.reconstruct_phase(spec)
         signal = self._decode_conv(spec)
         return signal
@@ -249,6 +237,26 @@ class SpectrogramBuilder(nn.Module):
         freq = mel_to_freq(mel_x)
 
         return freq
+    
+    def _linear_tail_freq_scale(self, freqs):
+        f_thresh = self.fsave / 4
+
+        ii = torch.arange(1, self.n_feats)
+        fs = freqs[1:]
+        df = freqs[1:] - freqs[:-1]
+        n_i = ii + (self.fmax - fs) / df
+        scale = self.n_feats / n_i
+        i_thresh = sum(df / scale < f_thresh)
+        scale = scale[i_thresh]
+
+        freqs = torch.concat([
+            freqs[:i_thresh],
+            torch.arange(freqs[i_thresh], self.fmax, f_thresh * scale)
+        ])
+
+        freqs = F.interpolate(freqs[None, None], self.n_feats, mode="linear")[0, 0]
+
+        return freqs
 
     def get_mel_scale(self):
         mel_min = freq_to_mel(self.fmin)
@@ -257,10 +265,12 @@ class SpectrogramBuilder(nn.Module):
         mels = torch.linspace(mel_min, mel_max, self.n_feats)
         freqs = mel_to_freq(mels)
 
+        freqs = self._linear_tail_freq_scale(freqs)
+
         return freqs
 
     def to_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
-        f = self.get_mel_scale() / self.frepr
+        f = self.get_mel_scale() / self.fsave
         phase0 = torch.exp(2j * torch.pi * f[:, None])
 
         df = spectrum.angle()
@@ -278,7 +288,7 @@ class SpectrogramBuilder(nn.Module):
         return spectrum
 
     def from_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
-        f = self.get_mel_scale() / self.frepr
+        f = self.get_mel_scale() / self.fsave
         phase0 = torch.exp(-2j * torch.pi * f[:, None])
 
         df = spectrum.angle()

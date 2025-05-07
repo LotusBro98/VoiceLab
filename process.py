@@ -73,6 +73,7 @@ class SpectrogramBuilder(nn.Module):
                  sample_rate: float, 
                  fsave: float = 400,
                  n_feats: int = 128,
+                 magitude: bool = True,
                  hear_sense_threshold: float = 1e-2):
         super().__init__()
 
@@ -80,6 +81,7 @@ class SpectrogramBuilder(nn.Module):
         self.fsave = fsave
         self.hear_sense_threshold = hear_sense_threshold
         self.n_feats = n_feats
+        self.magnitude = magitude
 
         self.fmin = 0
         self.fmax = sample_rate / 2
@@ -89,6 +91,12 @@ class SpectrogramBuilder(nn.Module):
     def build_kernel(self):
         fn = self.get_mel_scale()
         df = torch.gradient(fn)[0] * 2
+        if self.magnitude:
+            self.frepr = 2 * max(df).item()
+            print(self.frepr)
+            self.frepr = math.ceil(self.frepr / self.fsave) * self.fsave
+        else:
+            self.frepr = self.fsave
 
         win_size_T = 2 / torch.min(df)
 
@@ -97,10 +105,10 @@ class SpectrogramBuilder(nn.Module):
         W = torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
 
         ksize = W.shape[-1]
-        stride = int(self.sample_rate / self.fsave)
+        self.stride = int(self.sample_rate / self.frepr)
 
         windows = self.get_window(W.shape[-1], (self.sample_rate / df)[:, None], W.shape[-1] // 2)
-        mask = self.get_window_mask(ksize, stride, windows)
+        mask = self.get_window_mask(ksize, self.stride, windows)
 
         W *= windows
         W /= W.abs().square().sum(-1, keepdim=True).sqrt()
@@ -126,7 +134,6 @@ class SpectrogramBuilder(nn.Module):
     def _encode_conv(self, signal: torch.Tensor) -> torch.Tensor:
         sig_shape = signal.shape
         sig_len = signal.shape[-1]
-        stride = int(self.sample_rate / self.fsave)
 
         x = signal.reshape(-1, 1, sig_len)
 
@@ -134,7 +141,7 @@ class SpectrogramBuilder(nn.Module):
             x, 
             weight=self.kernel_encode, 
             bias=None, 
-            stride=stride,
+            stride=self.stride,
             padding=0,
         )
 
@@ -146,7 +153,6 @@ class SpectrogramBuilder(nn.Module):
     
     def _decode_conv(self, spec: torch.Tensor) -> torch.Tensor:
         spec_shape = spec.shape
-        stride = int(self.sample_rate / self.fsave)
 
         spec = spec.reshape(-1, *spec_shape[-2:])
 
@@ -159,7 +165,7 @@ class SpectrogramBuilder(nn.Module):
             spec, 
             weight=self.kernel_decode, 
             bias=None, 
-            stride=stride,
+            stride=self.stride,
             padding=0,
         )
 
@@ -167,11 +173,11 @@ class SpectrogramBuilder(nn.Module):
         return signal
     
     def reconstruct_phase(self, spec_abs: torch.Tensor) -> torch.Tensor:
-        # Griffin-Lim algorithm for signal reconstruction from magnitude-only spectrogram
+        # Griffin-Lim algorithm adaptation for signal reconstruction from magnitude-only spectrogram
 
         spec = torch.complex(spec_abs, torch.zeros_like(spec_abs))
         
-        for i in range(20):
+        for i in range(100):
             signal = self._decode_conv(spec)
             spec = self._encode_conv(signal)
             spec = spec_abs * torch.exp(1j * spec.angle())
@@ -180,15 +186,18 @@ class SpectrogramBuilder(nn.Module):
 
     def encode(self, signal: torch.Tensor) -> torch.Tensor:
         spec = self._encode_conv(signal)
-        spec = spec.abs()
+        if self.magnitude:
+            spec = spec.abs()
+            # spec = F.interpolate(spec[None], scale_factor=self.fsave / self.frepr, mode="nearest")[0]
         spec = self.to_bel_scale(spec)
         return spec
     
     def decode(self, spec: torch.Tensor) -> torch.Tensor:
         spec = self.from_bel_scale(spec)
-        spec = self.reconstruct_phase(spec)
+        if self.magnitude:
+            # spec = F.interpolate(spec[None], scale_factor=self.frepr / self.fsave, mode="nearest")[0]
+            spec = self.reconstruct_phase(spec)
         signal = self._decode_conv(spec)
-
         return signal
     
     def get_window(self, n_save, win_size, shift=0):
@@ -251,15 +260,15 @@ class SpectrogramBuilder(nn.Module):
         return freqs
 
     def to_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
-        f = self.get_mel_scale() / self.fsave
+        f = self.get_mel_scale() / self.frepr
         phase0 = torch.exp(2j * torch.pi * f[:, None])
 
         df = spectrum.angle()
         ampl = spectrum.abs()
 
-        # df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
+        df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
 
-        # df = (torch.exp(1j * df) * phase0).angle()
+        df = (torch.exp(1j * df) * phase0).angle()
 
         spectrum = (
             ampl *
@@ -269,15 +278,15 @@ class SpectrogramBuilder(nn.Module):
         return spectrum
 
     def from_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
-        f = self.get_mel_scale() / self.fsave
+        f = self.get_mel_scale() / self.frepr
         phase0 = torch.exp(-2j * torch.pi * f[:, None])
 
         df = spectrum.angle()
         ampl = spectrum.abs()
 
-        # df = (torch.exp(1j * df) * phase0).angle()
+        df = (torch.exp(1j * df) * phase0).angle()
 
-        # df = df.cumsum(-1)
+        df = df.cumsum(-1)
 
         spectrum = (
             ampl *
@@ -328,72 +337,3 @@ class SpectrogramBuilder(nn.Module):
         image = cv.cvtColor(image, cv.COLOR_HSV2RGB)
 
         return image
-
-
-# def build_spectrogram(x, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
-#     if not isinstance(x, torch.Tensor):
-#         x = torch.tensor(x)
-
-#     x_len = x.shape[-1]
-
-#     n_save = int(x_len * fsave / sample_rate)
-#     spec_all = torch.fft.fft(x, dim=-1)
-#     spec_all_freq_res = sample_rate / spec_all.shape[-1]
-#     fn = get_mel_scale(fmin, fmax) / spec_all_freq_res
-#     df = torch.gradient(fn)[0] * FREQ_RES
-
-#     log_spec = []
-#     for i in range(len(fn)):
-#         spec = get_subset(spec_all, fn[i], df[i], n_save)
-#         log_spec.append(spec)
-#     log_spec = torch.stack(log_spec, dim=-1)
-#     log_spec = torch.fft.ifft(log_spec, dim=-2)
-
-#     log_spec = to_freq_diff_repr(log_spec)
-#     log_spec = to_bel_scale(log_spec)
-
-#     if SAVE_FREQ != REPR_FREQ:
-#         t = np.linspace(0, 1, log_spec.shape[-2] - 1)
-#         f = interp1d(t, log_spec[..., 1:, :], axis=-2, kind='quadratic')
-#         t_new = np.linspace(0, 1, int((log_spec.shape[-2] - 1) * REPR_FREQ / SAVE_FREQ))
-#         log_spec = torch.concat([log_spec[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
-
-#     return log_spec
-
-
-# def generate_sound(spectrum, sample_rate, fsave=SAVE_FREQ, fmin=MIN_FREQ, fmax=MAX_FREQ):
-#     if SAVE_FREQ != REPR_FREQ:
-#         t = np.linspace(0, 1, spectrum.shape[-2] - 1)
-#         f = interp1d(t, spectrum[..., 1:, :], axis=-2, kind='quadratic')
-#         t_new = np.linspace(0, 1, int((spectrum.shape[-2] - 1) * SAVE_FREQ / REPR_FREQ))
-#         spectrum = torch.concat([spectrum[..., :1, :], torch.tensor(f(t_new), dtype=torch.complex64)], dim=-2)
-    
-#     n_all = int(len(spectrum) * sample_rate / fsave)
-#     n_save = spectrum.shape[0]
-
-#     spec_all_freq_res = sample_rate / n_all
-
-#     fn = get_mel_scale(fmin, fmax, fstep=FREQ_STEP, superres=FREQ_RES) / spec_all_freq_res
-#     df = np.gradient(fn) * FREQ_RES
-
-#     spectrum = from_bel_scale(spectrum)
-#     spectrum = from_freq_diff_repr(spectrum)
-
-#     spec_all = np.zeros((n_all,), dtype=np.complex128)
-#     weights_all = np.zeros((n_all,), dtype=np.complex128)
-    
-#     for i in range(len(fn)):
-#         ampl = spectrum[:,i]
-#         spec = np.fft.fft(ampl)
-#         set_subset(spec_all, fn[i], df[i], n_save, spec, weights_all)
-#     spec_all[len(spec_all) // 2:] = 0
-
-#     # plt.plot(weights_all)
-#     # plt.savefig("window.png")
-#     # plt.close()
-
-#     spec_all /= weights_all.clip(weights_all.max() / 5, None)
-#     spec_all[1:] += np.conj(spec_all)[1:][::-1]
-#     track = np.fft.ifft(spec_all)
-#     track = np.real(track)
-#     return track

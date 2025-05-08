@@ -9,64 +9,6 @@ from scipy.special import erfinv
 from scipy.interpolate import interp1d
 import cv2 as cv
 
-# SAVE_FREQ = 200
-# FREQ_STEP = 2 ** (1/12)
-# FREQ_RES = 2
-# MIN_FREQ = 0
-# MAX_FREQ = 11000
-# MEL_N_FEATS = 128
-
-# HEAR_SENSE_THRESHOLD = 1e-2
-
-
-# def get_subset(spec_all, fn, win_size, n_save):
-#     win = get_window(n_save, win_size)
-#     if len(spec_all.shape) == 2:
-#         win = win[None, ...]
-#     win = win.to(spec_all.device)
-
-#     fni = int(fn)
-#     idx_from = torch.arange(fni, fni + n_save)
-#     idx_from -= n_save // 2
-#     idx_from %= spec_all.shape[-1]
-
-#     idx_to = torch.arange(0, n_save)
-#     idx_to -= n_save // 2
-#     idx_to %= n_save
-
-#     spec = win * spec_all[..., idx_from[idx_to]]
-
-#     return spec
-
-
-def mel_to_freq(mel):
-    if not isinstance(mel, torch.Tensor):
-        mel = torch.tensor(mel)
-    return 700 * (torch.exp(mel / 1127) - 1)
-
-def freq_to_mel(freq):
-    if not isinstance(freq, torch.Tensor):
-        freq = torch.tensor(freq)
-    return 1127 * torch.log(1 + freq / 700)
-
-# def get_mel_n_feats(mel_min, mel_max, fstep, superres):
-#         mel_mid = (mel_min + mel_max) / 2
-#         freq_mid = mel_to_freq(mel_mid)
-#         dmel = mel_mid - freq_to_mel(freq_mid / fstep)
-#         n_feats = int((mel_max - mel_min) / dmel) * superres
-
-#         return n_feats
-
-# def get_n_freqs(fmin=MIN_FREQ, fmax=MAX_FREQ, fstep=FREQ_STEP, superres=FREQ_RES):
-#     if MEL_N_FEATS is not None:
-#         return MEL_N_FEATS
-
-#     mel_min = freq_to_mel(fmin)
-#     mel_max = freq_to_mel(fmax)
-
-#     n_feats = get_mel_n_feats(mel_min, mel_max, fstep, superres)
-#     return n_feats
-
 
 class SpectrogramBuilder(nn.Module):
     def __init__(self, 
@@ -222,19 +164,19 @@ class SpectrogramBuilder(nn.Module):
         return mask
 
     def freq_to_sample(self, freq):
-        mel_min = freq_to_mel(self.fmin)
-        mel_max = freq_to_mel(self.fmax)
-        mel_x = freq_to_mel(freq)
+        mel_min = self.freq_to_mel(self.fmin)
+        mel_max = self.freq_to_mel(self.fmax)
+        mel_x = self.freq_to_mel(freq)
 
         fn = (mel_x - mel_min) / (mel_max - mel_min) * self.n_feats
         return fn
 
     def sample_to_freq(self, fn):
-        mel_min = freq_to_mel(self, self.fmin)
-        mel_max = freq_to_mel(self, self.fmax)
+        mel_min = self.freq_to_mel(self, self.fmin)
+        mel_max = self.freq_to_mel(self, self.fmax)
 
         mel_x = fn / self.n_feats * (mel_max - mel_min) + mel_min
-        freq = mel_to_freq(mel_x)
+        freq = self.mel_to_freq(mel_x)
 
         return freq
     
@@ -259,11 +201,11 @@ class SpectrogramBuilder(nn.Module):
         return freqs
 
     def get_mel_scale(self):
-        mel_min = freq_to_mel(self.fmin)
-        mel_max = freq_to_mel(self.fmax)
+        mel_min = self.freq_to_mel(self.fmin)
+        mel_max = self.freq_to_mel(self.fmax)
 
         mels = torch.linspace(mel_min, mel_max, self.n_feats)
-        freqs = mel_to_freq(mels)
+        freqs = self.mel_to_freq(mels)
 
         freqs = self._linear_tail_freq_scale(freqs)
 
@@ -347,3 +289,13 @@ class SpectrogramBuilder(nn.Module):
         image = cv.cvtColor(image, cv.COLOR_HSV2RGB)
 
         return image
+
+    def mel_to_freq(self, mel):
+        if not isinstance(mel, torch.Tensor):
+            mel = torch.tensor(mel)
+        return 700 * (torch.exp(mel / 1127) - 1)
+
+    def freq_to_mel(self, freq):
+        if not isinstance(freq, torch.Tensor):
+            freq = torch.tensor(freq)
+        return 1127 * torch.log(1 + freq / 700)

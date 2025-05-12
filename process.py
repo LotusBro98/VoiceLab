@@ -130,18 +130,29 @@ class SpectrogramBuilder(nn.Module):
         signal = self._decode_conv(spec)
         return signal
     
-    def get_window(self, n_save, win_size, shift=0):
+    def get_window(self, n_save, win_size, shift=0, kind: Literal["flat", "hann", "gaussian", "invflat", "invhann"] = "gaussian"):
         window = (torch.arange(n_save) + shift + n_save // 2) % n_save - n_save // 2
 
-        window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
+        if kind == "hann":
+            window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
+        elif kind == "flat":
+            window = (window.abs() < win_size).float()
+        elif kind == "invflat":
+            win_size = n_save / win_size
+            window = (window.abs() < win_size).float()
+            window = torch.fft.ifft(window.roll(-shift)).clone().roll(shift)
+        elif kind == "invhann":
+            win_size = n_save / win_size
+            window = (torch.cos((window / win_size).clip(-1, 1) * torch.pi) + 1) / 2
+            window = torch.fft.ifft(window.roll(-shift)).clone().roll(shift)
+        elif kind == "gaussian":
+            prob_outside = 1e-2
+            std = (win_size / 2) / erfinv(1 - prob_outside)
+            window = torch.exp(-0.5 * torch.square(window / std))
 
-        # prob_outside = 1e-2
-        # std = (win_size / 2) / erfinv(1 - prob_outside)
-        # window = torch.exp(-0.5 * torch.square(window / std))
-
-        window -= window.abs().min()
+        if kind not in ["invflat", "invhann"]:
+            window -= window.abs().min()
         window /= window.sum(-1, keepdim=True) / win_size
-        # window /= window.abs().max()
 
         return window
 

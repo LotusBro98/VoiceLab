@@ -32,25 +32,24 @@ class SpectrogramBuilder(nn.Module):
 
     def build_kernel(self):
         fn = self.get_mel_scale()
-        df = torch.gradient(fn)[0] * 2
+        df = torch.gradient(fn)[0]
+        res = 2
 
-        win_size_T = 2 / torch.min(df)
-
-        t = torch.arange(0, win_size_T, 1 / self.sample_rate) - win_size_T / 2
-
-        W = torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
-
-        ksize = W.shape[-1]
+        win_sizes = (self.sample_rate / df / res)[:, None]
+        ksize = int(math.ceil(2 * torch.max(win_sizes)))
         self.stride = int(self.sample_rate / self.fsave)
 
-        windows = self.get_window(W.shape[-1], (self.sample_rate / df)[:, None], W.shape[-1] // 2)
-        mask = self.get_window_mask(ksize, self.stride, windows)
-
+        t = (torch.arange(0, ksize) - ksize / 2) / self.sample_rate
+        W = torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
+        
+        windows = self.get_window(W.shape[-1], win_sizes, W.shape[-1] // 2)
         W *= windows
         W /= W.abs().square().sum(-1, keepdim=True).sqrt()
-
         W_enc = W
 
+        mask = self.get_window_mask(ksize, self.stride, windows)
+        # TODO explain and clarify this line:
+        mask /= windows.sum(-1, keepdim=True) / (win_sizes * res / 2)
         W_dec = W / mask
 
         self.kernel_encode = torch.concat([
@@ -152,7 +151,7 @@ class SpectrogramBuilder(nn.Module):
 
         if kind not in ["invflat", "invhann"]:
             window -= window.abs().min()
-        window /= window.sum(-1, keepdim=True) / win_size
+        window /= window.max(-1, keepdim=True).values
 
         return window
 

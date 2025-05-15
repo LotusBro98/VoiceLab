@@ -1,5 +1,5 @@
 import math
-from typing import Literal
+from typing import Literal, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -7,7 +7,6 @@ from torch import nn
 from torch.nn import functional as F
 from scipy.special import erfinv
 from scipy.interpolate import interp1d
-import cv2 as cv
 
 
 class SpectrogramBuilder(nn.Module):
@@ -15,18 +14,21 @@ class SpectrogramBuilder(nn.Module):
                  sample_rate: float, 
                  fsave: float = 400,
                  n_feats: int = 160,
-                 magitude: bool = True,
-                 hear_sense_threshold: float = 1e-2):
+                 fmax: Optional[float] = None,
+                 magnitude: bool = True,
+                 hear_sense_threshold: float = 1e-2,
+                 combo_scale: bool = True):
         super().__init__()
 
         self.sample_rate = sample_rate
         self.fsave = fsave
         self.hear_sense_threshold = hear_sense_threshold
         self.n_feats = n_feats
-        self.magnitude = magitude
+        self.magnitude = magnitude
+        self.combo_scale = combo_scale
 
         self.fmin = 0
-        self.fmax = sample_rate / 2
+        self.fmax = fmax if fmax is not None else sample_rate / 2
 
         self.build_kernel()
 
@@ -217,7 +219,8 @@ class SpectrogramBuilder(nn.Module):
         mels = torch.linspace(mel_min, mel_max, self.n_feats)
         freqs = self.mel_to_freq(mels)
 
-        freqs = self._linear_tail_freq_scale(freqs)
+        if self.combo_scale:
+            freqs = self._linear_tail_freq_scale(freqs)
 
         return freqs
 
@@ -296,6 +299,7 @@ class SpectrogramBuilder(nn.Module):
             ampl.clip(0, 1),
         ], dim=-1).float().numpy()
 
+        import cv2 as cv
         image = cv.cvtColor(image, cv.COLOR_HSV2RGB)
 
         return image

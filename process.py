@@ -16,7 +16,7 @@ class SpectrogramBuilder(nn.Module):
                  n_feats: int = 160,
                  fmax: Optional[float] = None,
                  magnitude: bool = True,
-                 hear_sense_threshold: float = 1e-2,
+                 hear_sense_threshold: float = 1e-0,
                  combo_scale: bool = True):
         super().__init__()
 
@@ -30,6 +30,7 @@ class SpectrogramBuilder(nn.Module):
         self.fmin = 0
         self.fmax = fmax if fmax is not None else sample_rate / 2
 
+        self.fn = self.get_mel_scale()
         self.build_kernel()
 
     def build_kernel(self):
@@ -65,6 +66,8 @@ class SpectrogramBuilder(nn.Module):
         ], dim=0)[:, None, :]
 
     def _encode_conv(self, signal: torch.Tensor) -> torch.Tensor:
+        if self.kernel_encode.device != signal.device:
+            self.kernel_encode = self.kernel_encode.to(signal.device)
         sig_shape = signal.shape
         sig_len = signal.shape[-1]
 
@@ -85,6 +88,8 @@ class SpectrogramBuilder(nn.Module):
         return spec
     
     def _decode_conv(self, spec: torch.Tensor) -> torch.Tensor:
+        if self.kernel_decode.device != spec.device:
+            self.kernel_decode = self.kernel_decode.to(spec.device)
         spec_shape = spec.shape
 
         spec = spec.reshape(-1, *spec_shape[-2:])
@@ -124,10 +129,23 @@ class SpectrogramBuilder(nn.Module):
         spec = self.to_bel_scale(spec)
         return spec
     
-    def decode(self, spec: torch.Tensor) -> torch.Tensor:
+    def decode(self, spec: torch.Tensor, use_noise_masking: bool = True) -> torch.Tensor:
+        if use_noise_masking:
+            f_thresh = 3000
+            mask = F.sigmoid((self.fn.to(spec.device) - f_thresh) / self.n_feats)
+            mask = mask[:, None] * torch.ones_like(spec)
+            mask[spec < 1 * self.hear_sense_threshold] = 1
+
+        spec = spec.clip(0, None)
         spec = self.from_bel_scale(spec)
         if self.magnitude:
             spec = self.reconstruct_phase(spec)
+        
+        if use_noise_masking:
+            noise = torch.randn_like(spec) * spec.abs() * 1
+            spec = spec * (1 - mask) + noise * mask
+
+        spec[..., :1, :] = 0
         signal = self._decode_conv(spec)
         return signal
     
@@ -262,6 +280,7 @@ class SpectrogramBuilder(nn.Module):
 
     def to_bel_scale(self, spectrum) -> torch.Tensor:
         ampl = spectrum.abs()
+        ampl = ampl * self.fn.to(ampl.device)[:, None]
         ampl = torch.log10(1 + ampl / self.hear_sense_threshold)
 
         if not torch.is_complex(spectrum):
@@ -275,6 +294,7 @@ class SpectrogramBuilder(nn.Module):
     def from_bel_scale(self, spectrum) -> torch.Tensor:
         ampl = spectrum.abs()
         ampl = self.hear_sense_threshold * (torch.pow(10, ampl) - 1)
+        ampl = ampl / self.fn.to(ampl.device)[:, None]
 
         if not torch.is_complex(spectrum):
             return ampl

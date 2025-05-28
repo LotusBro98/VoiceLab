@@ -17,7 +17,9 @@ class SpectrogramBuilder(nn.Module):
                  fmax: Optional[float] = None,
                  magnitude: bool = True,
                  hear_sense_threshold: float = 1e-0,
-                 combo_scale: bool = True):
+                 combo_scale: bool = True,
+                 power_by_freq_scale: bool = True,         
+        ):
         super().__init__()
 
         self.sample_rate = sample_rate
@@ -26,6 +28,7 @@ class SpectrogramBuilder(nn.Module):
         self.n_feats = n_feats
         self.magnitude = magnitude
         self.combo_scale = combo_scale
+        self.power_by_freq_scale = power_by_freq_scale
 
         self.fmin = 0
         self.fmax = fmax if fmax is not None else sample_rate / 2
@@ -280,7 +283,8 @@ class SpectrogramBuilder(nn.Module):
 
     def to_bel_scale(self, spectrum) -> torch.Tensor:
         ampl = spectrum.abs()
-        ampl = ampl * self.fn.to(ampl.device)[:, None]
+        if self.power_by_freq_scale:
+            ampl = ampl * self.fn.to(ampl.device)[:, None]
         ampl = torch.log10(1 + ampl / self.hear_sense_threshold)
 
         if not torch.is_complex(spectrum):
@@ -294,7 +298,8 @@ class SpectrogramBuilder(nn.Module):
     def from_bel_scale(self, spectrum) -> torch.Tensor:
         ampl = spectrum.abs()
         ampl = self.hear_sense_threshold * (torch.pow(10, ampl) - 1)
-        ampl = ampl / self.fn.to(ampl.device)[:, None]
+        if self.power_by_freq_scale:
+            ampl = ampl / self.fn.to(ampl.device)[:, None]
 
         if not torch.is_complex(spectrum):
             return ampl

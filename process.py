@@ -304,9 +304,11 @@ class SpectrogramBuilder(nn.Module):
             torch.exp(1j * spectrum.angle())
         )
     
-    def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std"] = "std"):
+    def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std", None] = "std"):
         ampl = spectrum.abs()
-        if ampl_cap == "std":
+        if ampl_cap is None:
+            pass
+        elif ampl_cap == "std":
             ampl /= ampl.abs().square().mean().sqrt() * 3
         elif ampl_cap == "max":
             ampl /= ampl.max()

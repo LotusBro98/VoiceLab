@@ -138,7 +138,9 @@ class SpectrogramBuilder(nn.Module):
             mask = mask[:, None] * torch.ones_like(spec)
             mask[spec < 1 * self.hear_sense_threshold] = 1
 
-        spec = spec.clip(0, None)
+        if self.magnitude:
+            spec = spec.clip(0, None)
+
         spec = self.from_bel_scale(spec)
         if self.magnitude:
             spec = self.reconstruct_phase(spec)

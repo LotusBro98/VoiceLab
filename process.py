@@ -41,22 +41,21 @@ class SpectrogramBuilder(nn.Module):
         df = torch.gradient(fn)[0]
         res = 2
 
-        win_sizes = (self.sample_rate / df / res)[:, None]
+        win_sizes = (self.sample_rate / df)[:, None]
         ksize = int(math.ceil(2 * torch.max(win_sizes)))
         self.stride = int(self.sample_rate / self.fsave)
 
+        windows = self.get_window(ksize, win_sizes / res, ksize // 2)
+        mask = self.get_window_mask(ksize, self.stride, windows.square())
+        # mask = 0.0044 #* win_sizes ** 2
+
         t = (torch.arange(0, ksize) - ksize / 2) / self.sample_rate
         W = torch.exp(2j * torch.pi * fn[:, None] * t[None, :])
-        
-        windows = self.get_window(W.shape[-1], win_sizes, W.shape[-1] // 2)
         W *= windows
-        W /= W.abs().square().sum(-1, keepdim=True).sqrt()
-        W_enc = W
+        W /= win_sizes.sqrt()
 
-        mask = self.get_window_mask(ksize, self.stride, windows)
-        # TODO explain and clarify this line:
-        mask /= windows.sum(-1, keepdim=True) / (win_sizes * res / 2)
-        W_dec = W / mask
+        W_enc = W
+        W_dec = W / mask * 2
 
         self.kernel_encode = torch.concat([
             W_enc.real,
@@ -179,20 +178,14 @@ class SpectrogramBuilder(nn.Module):
         return window
 
     def get_window_mask(self, ksize, stride, windows):
-        center = ksize // 2
         idxs = torch.concatenate([
-            torch.arange(center, 0, -stride)[1:].__reversed__() - center,
-            torch.arange(center, ksize, stride) - center,
+            torch.arange(-ksize // stride * stride, ksize // stride * stride, stride)[1:-1]
         ])
 
         mask = torch.zeros_like(windows)
 
         for i in idxs:
             mask[:, max(i, 0): min(ksize + i, ksize)] += windows[:, max(-i, 0): min(ksize - i, ksize)]
-
-        # plt.plot((windows / mask).T)
-        # plt.savefig("mask.png")
-        # plt.close()
 
         return mask
 

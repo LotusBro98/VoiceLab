@@ -33,12 +33,13 @@ track0 = track
 # track = np.sin(2 * np.pi * f1 * t)
 # track += np.sin(2 * np.pi * f2 * t)
 
-builder = SpectrogramBuilder(sample_rate)
+builder = SpectrogramBuilder(sample_rate, magnitude=False, use_noise_masking=False, combo_scale=False)
 
 # f = np.linspace(5000, 5000, len(track), dtype=np.float32)
 # track = (np.sin(np.linspace(0, 1, len(track), dtype=np.float32) * f))
 
-spectrum = builder.encode(torch.tensor(track))
+print(track.shape)
+spectrum = builder.encode(torch.tensor(track, device="cuda")).cpu()
 print(spectrum.shape)
 
 # spectrum *= torch.rand_like(spectrum.abs()) < 0.9

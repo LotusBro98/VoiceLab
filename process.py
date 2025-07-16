@@ -7,6 +7,8 @@ from torch import nn
 from torch.nn import functional as F
 from scipy.special import erfinv
 from scipy.interpolate import interp1d
+import torchvision
+import torchvision.transforms.functional
 
 
 class SpectrogramBuilder(nn.Module):
@@ -19,6 +21,7 @@ class SpectrogramBuilder(nn.Module):
                  hear_sense_threshold: float = 1e-0,
                  combo_scale: bool = True,
                  power_by_freq_scale: bool = True,         
+                 use_noise_masking: bool = True,
         ):
         super().__init__()
 
@@ -29,6 +32,7 @@ class SpectrogramBuilder(nn.Module):
         self.magnitude = magnitude
         self.combo_scale = combo_scale
         self.power_by_freq_scale = power_by_freq_scale
+        self.use_noise_masking = use_noise_masking
 
         self.fmin = 0
         self.fmax = fmax if fmax is not None else sample_rate / 2
@@ -131,12 +135,12 @@ class SpectrogramBuilder(nn.Module):
         spec = self.to_bel_scale(spec)
         return spec
     
-    def decode(self, spec: torch.Tensor, use_noise_masking: bool = True) -> torch.Tensor:
-        if use_noise_masking:
+    def decode(self, spec: torch.Tensor) -> torch.Tensor:
+        if self.use_noise_masking:
             f_thresh = 3000
             mask = F.sigmoid((self.fn.to(spec.device) - f_thresh) / self.n_feats)
             mask = mask[:, None] * torch.ones_like(spec)
-            mask[spec < 1 * self.hear_sense_threshold] = 1
+            mask[spec.abs() < 1 * self.hear_sense_threshold] = 1
 
         if self.magnitude:
             spec = spec.clip(0, None)
@@ -145,7 +149,7 @@ class SpectrogramBuilder(nn.Module):
         if self.magnitude:
             spec = self.reconstruct_phase(spec)
         
-        if use_noise_masking:
+        if self.use_noise_masking:
             noise = torch.randn_like(spec) * spec.abs() * 1
             spec = spec * (1 - mask) + noise * mask
 
@@ -242,7 +246,7 @@ class SpectrogramBuilder(nn.Module):
 
     def to_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
         f = self.get_mel_scale() / self.fsave
-        phase0 = torch.exp(2j * torch.pi * f[:, None])
+        phase0 = torch.exp(2j * torch.pi * f[:, None]).to(device=spectrum.device)
 
         df = spectrum.angle()
         ampl = spectrum.abs()
@@ -316,15 +320,16 @@ class SpectrogramBuilder(nn.Module):
         phase = spectrum.angle()
 
         image = torch.stack([
-            (phase + torch.pi).rad2deg(),
+            (phase + torch.pi) / (2 * torch.pi),
             (1 - ampl).clip(None, 0).exp(),
             ampl.clip(0, 1),
-        ], dim=-1).float().numpy()
+        ], dim=0).float()
 
-        import cv2 as cv
-        image = cv.cvtColor(image, cv.COLOR_HSV2RGB)
+        image = torchvision.transforms.functional.to_pil_image(image, mode="HSV")
+        rgb_image = image.convert(mode="RGB")
+        rgb_image = np.array(rgb_image)
 
-        return image
+        return rgb_image
 
     def mel_to_freq(self, mel):
         if not isinstance(mel, torch.Tensor):

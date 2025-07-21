@@ -248,10 +248,16 @@ class SpectrogramBuilder(nn.Module):
         f = self.get_mel_scale() / self.fsave
         phase0 = torch.exp(2j * torch.pi * f[:, None]).to(device=spectrum.device)
 
-        df = spectrum.angle()
+        # df = spectrum.angle()
         ampl = spectrum.abs()
 
-        df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
+        df = spectrum.angle() - (
+            0.5 * spectrum.roll(1, -1).roll(1, -2) + 
+            1.0 * spectrum.roll(1, -1).roll(0, -2) + 
+            0.5 * spectrum.roll(1, -1).roll(-1, -2)
+        ).angle()
+
+        # df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
 
         df = (torch.exp(1j * df) * phase0).angle()
 
@@ -271,7 +277,19 @@ class SpectrogramBuilder(nn.Module):
 
         df = (torch.exp(1j * df) * phase0).angle()
 
-        df = df.cumsum(-1)
+        # df = df.cumsum(-1)
+
+        df1 = df[..., 0:1]
+        spec1 = (ampl * torch.exp(1j * df))[..., 0:1]
+        for i in range(1, df.shape[-1]):
+            dfi = df[..., i:i+1] + (
+                0.5 * spec1.roll(1, -2) +
+                1.0 * spec1.roll(0, -2) +
+                0.5 * spec1.roll(-1, -2)
+            ).angle()
+            spec1 = ampl[..., i:i+1] * torch.exp(1j * dfi)
+            df1 = torch.concat([df1, dfi], dim=-1)
+        df = df1
 
         spectrum = (
             ampl *
@@ -298,7 +316,7 @@ class SpectrogramBuilder(nn.Module):
         ampl = spectrum.abs()
         ampl = self.hear_sense_threshold * (torch.pow(10, ampl) - 1)
         if self.power_by_freq_scale:
-            ampl = ampl / self.fn.to(ampl.device)[:, None]
+            ampl = ampl / self.fn.to(ampl.device)[:, None].clip(1e-9, None)
 
         if not torch.is_complex(spectrum):
             return ampl

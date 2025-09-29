@@ -63,5 +63,5 @@ plt.close()
 # render_plot(np.abs(spectrum), 0, sample_rate)
 
 
-write("track.wav", sample_rate, (track2.numpy()*2**31).astype(np.int32))
+write("track.wav", sample_rate, (track2.cpu().numpy()*2**31).astype(np.int32))
 write("orig.wav", sample_rate, (track*2**31).astype(np.int32))

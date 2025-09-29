@@ -148,14 +148,23 @@ class SpectrogramBuilder(nn.Module):
         plt.savefig("pca.png")
         plt.close()
 
-
+        padding = ((ksize[0]-1)//2, (ksize[1]-1)//2)
         spec_scaled = F.conv2d(spec, K[:, None, :, :], padding="same")
-        spec_scaled = F.conv_transpose2d(spec_scaled, K[:, None, :, :].conj(), padding=((ksize[0]-1)//2, (ksize[1]-1)//2))
+        spec_scaled = F.conv_transpose2d(spec_scaled, K[:, None, :, :].conj(), padding=padding)
+
+        diff = spec - spec_scaled
+        diff = diff.abs().square()
+        diff = torchvision.transforms.functional.gaussian_blur(diff, ksize)
+        diff = diff.sqrt()
+
+        # Convert coherent signal to noise, where noise is strong
+        mod = (diff.square() + spec_scaled.abs().square()).sqrt()
+        diff = (diff.square() + spec_scaled.abs().square() * (diff / mod).square()).sqrt()
+        spec_scaled = spec_scaled * (spec_scaled.abs() / mod)
 
         spec = spec.reshape(spec_shape)
         spec_scaled = spec_scaled.reshape(spec_shape)
-
-        diff = spec - spec_scaled
+        diff = diff.reshape(spec_shape)
 
         return spec_scaled, diff
 
@@ -167,7 +176,7 @@ class SpectrogramBuilder(nn.Module):
         
         if snr:
             spec_coher, spec_noise = self.signal_noise_decomposition(spec)
-            spec = spec_coher
+            spec = spec_coher + spec_noise * torch.randn_like(spec_noise, dtype=torch.complex64)
         spec = self.to_bel_scale(spec)
         return spec
     

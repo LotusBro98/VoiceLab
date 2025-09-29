@@ -39,7 +39,8 @@ builder = SpectrogramBuilder(sample_rate, magnitude=False, use_noise_masking=Fal
 # track = (np.sin(np.linspace(0, 1, len(track), dtype=np.float32) * f))
 
 print(track.shape)
-spectrum = builder.encode(torch.tensor(track, device="cuda")).cpu()
+spec0 = builder.encode(torch.tensor(track, device="cuda"), snr=False)
+spectrum = builder.encode(torch.tensor(track, device="cuda"), snr=True)
 print(spectrum.shape)
 
 # spectrum *= torch.rand_like(spectrum.abs()) < 0.9
@@ -52,10 +53,10 @@ print(spectrum.shape)
 track2 = builder.decode(spectrum)
 spec2 = builder.encode(track2)
 
-f, ax = plt.subplots(3, figsize=(15, 20))
-ax[0].imshow(builder.complex_picture(spectrum)[::-1], aspect=1, interpolation="nearest")
+f, ax = plt.subplots(3, figsize=(15, 10))
+ax[0].imshow(builder.complex_picture(spec0)[::-1], aspect=1, interpolation="nearest")
 ax[1].imshow(builder.complex_picture(spec2)[::-1], aspect=1, interpolation="nearest")
-ax[2].imshow(builder.complex_picture(spec2 - spectrum)[::-1], aspect=1, interpolation="nearest")
+ax[2].imshow(builder.complex_picture(spec2 - spec0)[::-1], aspect=1, interpolation="nearest")
 plt.savefig("complex_pic.png")
 plt.close()
 

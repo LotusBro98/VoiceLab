@@ -127,11 +127,47 @@ class SpectrogramBuilder(nn.Module):
             spec = spec_abs * torch.exp(1j * spec.angle())
 
         return spec
+    
+    def signal_noise_decomposition(self, spec: torch.Tensor) -> torch.Tensor:
+        spec_shape = spec.shape
+        spec = spec.reshape(-1, 1, *spec_shape[-3:])
 
-    def encode(self, signal: torch.Tensor) -> torch.Tensor:
+        ksize = (9, 9)
+        patches = torch.nn.functional.unfold(spec, ksize).transpose(0, 1).reshape(np.prod(ksize), -1)
+        patches -= patches.mean(-1, keepdim=True)
+        cov = patches @ patches.H / patches.shape[-1]
+
+        U, S, V = torch.linalg.svd(cov)
+        K = V[:12]
+        K = K.reshape(K.shape[0], *ksize)
+        K = K / math.sqrt(np.prod(ksize))
+        
+        f, ax = plt.subplots(1, K.shape[0], figsize=(15, 15))
+        for i in range(K.shape[0]):
+            ax[i].imshow(self.complex_picture(K[i])[::-1], aspect=1, interpolation="nearest")
+        plt.savefig("pca.png")
+        plt.close()
+
+
+        spec_scaled = F.conv2d(spec, K[:, None, :, :], padding="same")
+        spec_scaled = F.conv_transpose2d(spec_scaled, K[:, None, :, :].conj(), padding=((ksize[0]-1)//2, (ksize[1]-1)//2))
+
+        spec = spec.reshape(spec_shape)
+        spec_scaled = spec_scaled.reshape(spec_shape)
+
+        diff = spec - spec_scaled
+
+        return spec_scaled, diff
+
+    def encode(self, signal: torch.Tensor, snr=False) -> torch.Tensor:
         spec = self._encode_conv(signal)
         if self.magnitude:
             spec = spec.abs()
+        spec = self.to_freq_diff_repr(spec)
+        
+        if snr:
+            spec_coher, spec_noise = self.signal_noise_decomposition(spec)
+            spec = spec_coher
         spec = self.to_bel_scale(spec)
         return spec
     
@@ -146,6 +182,7 @@ class SpectrogramBuilder(nn.Module):
             spec = spec.clip(0, None)
 
         spec = self.from_bel_scale(spec)
+        spec = self.from_freq_diff_repr(spec)
         if self.magnitude:
             spec = self.reconstruct_phase(spec)
         
@@ -270,7 +307,7 @@ class SpectrogramBuilder(nn.Module):
 
     def from_freq_diff_repr(self, spectrum: torch.Tensor) -> torch.Tensor:
         f = self.get_mel_scale() / self.fsave
-        phase0 = torch.exp(-2j * torch.pi * f[:, None])
+        phase0 = torch.exp(-2j * torch.pi * f.to(spectrum.device)[:, None])
 
         df = spectrum.angle()
         ampl = spectrum.abs()

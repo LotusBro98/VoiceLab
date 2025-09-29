@@ -174,10 +174,22 @@ class SpectrogramBuilder(nn.Module):
             spec = spec.abs()
         spec = self.to_freq_diff_repr(spec)
         
+        spec = self.to_bel_scale(spec)
         if snr:
             spec_coher, spec_noise = self.signal_noise_decomposition(spec)
-            spec = spec_coher + spec_noise * torch.randn_like(spec_noise, dtype=torch.complex64)
-        spec = self.to_bel_scale(spec)
+
+            spec_coher = self.from_bel_scale(spec_coher)
+            spec_noise = self.from_bel_scale(spec_noise)
+
+            plt.figure(figsize=(15, 5))
+            plt.imshow(self.complex_picture(self.to_bel_scale(spec_coher), noise=self.to_bel_scale(spec_noise))[::-1], interpolation="nearest")
+            plt.savefig("with_noise.png")
+            plt.close()
+            
+            spec = spec_coher + spec_noise * torch.randn_like(spec_coher)
+            spec = self.to_bel_scale(spec)
+        # spec = self.to_bel_scale(spec)
+        
         return spec
     
     def decode(self, spec: torch.Tensor) -> torch.Tensor:
@@ -372,8 +384,11 @@ class SpectrogramBuilder(nn.Module):
             torch.exp(1j * spectrum.angle())
         )
     
-    def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std", None] = "std"):
+    def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std", None] = "std", noise: torch.Tensor = None):
         ampl = spectrum.abs()
+        if noise is not None:
+            snr = ampl / (ampl.square() + noise.square()).sqrt()
+            ampl = (ampl.square() + noise.square()).sqrt()
         if ampl_cap is None:
             pass
         elif ampl_cap == "std":
@@ -383,9 +398,13 @@ class SpectrogramBuilder(nn.Module):
 
         phase = spectrum.angle()
 
+        if noise is not None:
+            saturation = snr
+        else:
+            saturation = (1 - ampl).clip(None, 0).exp()
         image = torch.stack([
             (phase + torch.pi) / (2 * torch.pi),
-            (1 - ampl).clip(None, 0).exp(),
+            saturation,
             ampl.clip(0, 1),
         ], dim=0).float()
 

@@ -12,7 +12,7 @@ from scipy.io.wavfile import write
 
 from dataset import AudioDataset
 from model import Autoencoder
-from process import SpectrogramBuilder
+from process import SpectrogramBuilder, complex_picture
 
 
 def main():
@@ -52,9 +52,9 @@ def main():
         spec, spec_pred = spec[0], spec_pred[0]
 
     f, ax = plt.subplots(3, 1, figsize=(40, 20))
-    ax[0].imshow(builder.complex_picture(spec)[::-1], aspect=1)
-    ax[1].imshow(builder.complex_picture(spec_pred)[::-1], aspect=1)
-    ax[2].imshow(builder.complex_picture((spec - spec_pred))[::-1], aspect=1)
+    ax[0].imshow(complex_picture(spec)[::-1], aspect=1)
+    ax[1].imshow(complex_picture(spec_pred)[::-1], aspect=1)
+    ax[2].imshow(complex_picture((spec - spec_pred))[::-1], aspect=1)
     plt.savefig("complex_picture.png")
     plt.close()
 

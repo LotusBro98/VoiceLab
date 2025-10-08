@@ -11,11 +11,43 @@ import torchvision
 import torchvision.transforms.functional
 
 
+def complex_picture(spectrum: torch.Tensor, ampl_cap: Literal["max", "std", None] = "std", noise: torch.Tensor = None):
+    ampl = spectrum.abs()
+    if noise is not None:
+        snr = ampl / (ampl.square() + noise.square()).sqrt()
+        ampl = (ampl.square() + noise.square()).sqrt()
+    if ampl_cap is None:
+        pass
+    elif ampl_cap == "std":
+        ampl /= ampl.abs().square().mean().sqrt() * 3
+    elif ampl_cap == "max":
+        ampl /= ampl.max()
+
+    phase = spectrum.angle()
+
+    if noise is not None:
+        saturation = snr
+    else:
+        saturation = (1 - ampl).clip(None, 0).exp()
+    image = torch.stack([
+        (phase + torch.pi) / (2 * torch.pi),
+        saturation,
+        ampl.clip(0, 1),
+    ], dim=0).float()
+
+    image = torchvision.transforms.functional.to_pil_image(image, mode="HSV")
+    rgb_image = image.convert(mode="RGB")
+    rgb_image = np.array(rgb_image)
+
+    return rgb_image
+
+
 class SpectrogramBuilder(nn.Module):
     def __init__(self, 
                  sample_rate: float, 
                  fsave: float = 400,
                  n_feats: int = 160,
+                 freq_res: float = 2,
                  fmax: Optional[float] = None,
                  magnitude: bool = True,
                  hear_sense_threshold: float = 1e-0,
@@ -27,6 +59,7 @@ class SpectrogramBuilder(nn.Module):
 
         self.sample_rate = sample_rate
         self.fsave = fsave
+        self.freq_res = freq_res
         self.hear_sense_threshold = hear_sense_threshold
         self.n_feats = n_feats
         self.magnitude = magnitude
@@ -43,13 +76,12 @@ class SpectrogramBuilder(nn.Module):
     def build_kernel(self):
         fn = self.get_mel_scale()
         df = torch.gradient(fn)[0]
-        res = 2
 
         win_sizes = (self.sample_rate / df)[:, None]
         ksize = int(math.ceil(2 * torch.max(win_sizes)))
         self.stride = int(self.sample_rate / self.fsave)
 
-        windows = self.get_window(ksize, win_sizes / res, ksize // 2)
+        windows = self.get_window(ksize, win_sizes / self.freq_res, ksize // 2)
         mask = self.get_window_mask(ksize, self.stride, windows.square())
         # mask = 0.0044 #* win_sizes ** 2
 
@@ -144,7 +176,7 @@ class SpectrogramBuilder(nn.Module):
         
         f, ax = plt.subplots(1, K.shape[0], figsize=(15, 15))
         for i in range(K.shape[0]):
-            ax[i].imshow(self.complex_picture(K[i])[::-1], aspect=1, interpolation="nearest")
+            ax[i].imshow(complex_picture(K[i])[::-1], aspect=1, interpolation="nearest")
         plt.savefig("pca.png")
         plt.close()
 
@@ -175,19 +207,19 @@ class SpectrogramBuilder(nn.Module):
         spec = self.to_freq_diff_repr(spec)
         
         spec = self.to_bel_scale(spec)
-        if snr:
-            spec_coher, spec_noise = self.signal_noise_decomposition(spec)
+        # if snr:
+        #     spec_coher, spec_noise = self.signal_noise_decomposition(spec)
 
-            spec_coher = self.from_bel_scale(spec_coher)
-            spec_noise = self.from_bel_scale(spec_noise)
+        #     spec_coher = self.from_bel_scale(spec_coher)
+        #     spec_noise = self.from_bel_scale(spec_noise)
 
-            plt.figure(figsize=(15, 5))
-            plt.imshow(self.complex_picture(self.to_bel_scale(spec_coher), noise=self.to_bel_scale(spec_noise))[::-1], interpolation="nearest")
-            plt.savefig("with_noise.png")
-            plt.close()
+        #     plt.figure(figsize=(15, 5))
+        #     plt.imshow(complex_picture(self.to_bel_scale(spec_coher), noise=self.to_bel_scale(spec_noise))[::-1], interpolation="nearest")
+        #     plt.savefig("with_noise.png")
+        #     plt.close()
             
-            spec = spec_coher + spec_noise * torch.randn_like(spec_coher)
-            spec = self.to_bel_scale(spec)
+        #     spec = spec_coher + spec_noise * torch.randn_like(spec_coher)
+        #     spec = self.to_bel_scale(spec)
         # spec = self.to_bel_scale(spec)
         
         return spec
@@ -383,36 +415,6 @@ class SpectrogramBuilder(nn.Module):
             ampl *
             torch.exp(1j * spectrum.angle())
         )
-    
-    def complex_picture(self, spectrum: torch.Tensor, ampl_cap: Literal["max", "std", None] = "std", noise: torch.Tensor = None):
-        ampl = spectrum.abs()
-        if noise is not None:
-            snr = ampl / (ampl.square() + noise.square()).sqrt()
-            ampl = (ampl.square() + noise.square()).sqrt()
-        if ampl_cap is None:
-            pass
-        elif ampl_cap == "std":
-            ampl /= ampl.abs().square().mean().sqrt() * 3
-        elif ampl_cap == "max":
-            ampl /= ampl.max()
-
-        phase = spectrum.angle()
-
-        if noise is not None:
-            saturation = snr
-        else:
-            saturation = (1 - ampl).clip(None, 0).exp()
-        image = torch.stack([
-            (phase + torch.pi) / (2 * torch.pi),
-            saturation,
-            ampl.clip(0, 1),
-        ], dim=0).float()
-
-        image = torchvision.transforms.functional.to_pil_image(image, mode="HSV")
-        rgb_image = image.convert(mode="RGB")
-        rgb_image = np.array(rgb_image)
-
-        return rgb_image
 
     def mel_to_freq(self, mel):
         if not isinstance(mel, torch.Tensor):

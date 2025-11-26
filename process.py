@@ -177,11 +177,11 @@ class SpectrogramBuilder(nn.Module):
 
         return spec
     
-    def signal_noise_decomposition(self, spec: torch.Tensor, K=None, n_feats=None) -> Tuple[torch.Tensor, torch.Tensor]:
+    def signal_noise_decomposition(self, spec: torch.Tensor, K=None, n_feats=None, snr=1) -> Tuple[torch.Tensor, torch.Tensor]:
         spec_shape = spec.shape
         spec = spec.reshape(-1, 1, *spec_shape[-2:])
 
-        ksize = (9, 9)
+        ksize = (5, 5)
         if K is None:
             with torch.no_grad():
                 patches = torch.nn.functional.unfold(spec, ksize).transpose(0, 1).reshape(np.prod(ksize), -1)
@@ -189,7 +189,6 @@ class SpectrogramBuilder(nn.Module):
                 cov = patches @ patches.H / patches.shape[-1]
 
                 U, S, V = torch.linalg.svd(cov)
-                snr = 1
                 n_feats = (S.cumsum(-1) < snr * S.flip(-1).cumsum(-1).flip(-1)).sum()
                 # print(n_feats)
                 K = V

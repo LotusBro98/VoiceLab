@@ -8,6 +8,39 @@ from torch.utils.data import Dataset
 from process import SpectrogramBuilder
 
 class AudioDataset(Dataset):
+    def __init__(self, paths: List[str], chunk_len: float = 5, sample_rate=None):
+        super().__init__()
+
+        if isinstance(paths, str):
+            paths = [paths]
+
+        # paths = glob.glob(f"{root}/*.mp3", recursive=True)
+
+        self.chunks = []
+        self.sample_rates = []
+
+        for path in paths:
+            track, sample_rate_i = librosa.load(path, sr=sample_rate)
+
+            step = int(chunk_len * sample_rate_i)
+            for i in range(0, len(track) - step, step):
+                chunk = track[i : i + step]
+                self.chunks.append(chunk)
+                self.sample_rates.append(sample_rate_i)
+
+        self.chunks = torch.from_numpy(np.stack(self.chunks, axis=0))
+
+    def __getitem__(self, index) -> torch.Tensor:
+        chunk = self.chunks[index]
+        sample_rate = self.sample_rates[index]
+
+        return chunk, sample_rate
+
+    def __len__(self):
+        return len(self.chunks)
+
+
+class SpectrogramDataset(Dataset):
     def __init__(self, paths: List[str], chunk_len: float = 5):
         super().__init__()
 

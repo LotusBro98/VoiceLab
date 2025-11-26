@@ -1,5 +1,5 @@
 import math
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -50,6 +50,7 @@ class SpectrogramBuilder(nn.Module):
                  freq_res: float = 2,
                  fmax: Optional[float] = None,
                  magnitude: bool = True,
+                 freq_diff: bool = True,
                  hear_sense_threshold: float = 1e-0,
                  combo_scale: bool = True,
                  power_by_freq_scale: bool = True,         
@@ -63,6 +64,7 @@ class SpectrogramBuilder(nn.Module):
         self.hear_sense_threshold = hear_sense_threshold
         self.n_feats = n_feats
         self.magnitude = magnitude
+        self.freq_diff = freq_diff
         self.combo_scale = combo_scale
         self.power_by_freq_scale = power_by_freq_scale
         self.use_noise_masking = use_noise_masking
@@ -72,6 +74,7 @@ class SpectrogramBuilder(nn.Module):
 
         self.fn = self.get_mel_scale()
         self.build_kernel()
+        self.K = None
 
     def build_kernel(self):
         fn = self.get_mel_scale()
@@ -116,7 +119,7 @@ class SpectrogramBuilder(nn.Module):
             weight=self.kernel_encode, 
             bias=None, 
             stride=self.stride,
-            padding=0,
+            padding=(self.kernel_encode.shape[-1]-1)//2,
         )
 
         spec_real, spec_imag = spec.chunk(2, dim=1)
@@ -142,7 +145,7 @@ class SpectrogramBuilder(nn.Module):
             weight=self.kernel_decode, 
             bias=None, 
             stride=self.stride,
-            padding=0,
+            padding=(self.kernel_encode.shape[-1]-1)//2,
         )
 
         signal = signal.reshape(*spec_shape[:-2], signal.shape[-1])
@@ -160,29 +163,32 @@ class SpectrogramBuilder(nn.Module):
 
         return spec
     
-    def signal_noise_decomposition(self, spec: torch.Tensor) -> torch.Tensor:
+    def signal_noise_decomposition(self, spec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         spec_shape = spec.shape
-        spec = spec.reshape(-1, 1, *spec_shape[-3:])
+        spec = spec.reshape(-1, 1, *spec_shape[-2:])
 
         ksize = (9, 9)
-        patches = torch.nn.functional.unfold(spec, ksize).transpose(0, 1).reshape(np.prod(ksize), -1)
-        patches -= patches.mean(-1, keepdim=True)
-        cov = patches @ patches.H / patches.shape[-1]
+        if True:#self.K is None:
+            with torch.no_grad():
+                patches = torch.nn.functional.unfold(spec, ksize).transpose(0, 1).reshape(np.prod(ksize), -1)
+                patches -= patches.mean(-1, keepdim=True)
+                cov = patches @ patches.H / patches.shape[-1]
 
-        U, S, V = torch.linalg.svd(cov)
-        K = V[:12]
-        K = K.reshape(K.shape[0], *ksize)
-        K = K / math.sqrt(np.prod(ksize))
+                U, S, V = torch.linalg.svd(cov)
+                K = V[:12]
+                K = K.reshape(K.shape[0], *ksize)
+                K = K / math.sqrt(np.prod(ksize))
+                self.K = K
         
-        f, ax = plt.subplots(1, K.shape[0], figsize=(15, 15))
-        for i in range(K.shape[0]):
-            ax[i].imshow(complex_picture(K[i])[::-1], aspect=1, interpolation="nearest")
-        plt.savefig("pca.png")
-        plt.close()
+        # f, ax = plt.subplots(1, self.K.shape[0], figsize=(15, 15))
+        # for i in range(self.K.shape[0]):
+        #     ax[i].imshow(complex_picture(self.K[i])[::-1], aspect=1, interpolation="nearest")
+        # plt.savefig("pca.png")
+        # plt.close()
 
         padding = ((ksize[0]-1)//2, (ksize[1]-1)//2)
-        spec_scaled = F.conv2d(spec, K[:, None, :, :], padding="same")
-        spec_scaled = F.conv_transpose2d(spec_scaled, K[:, None, :, :].conj(), padding=padding)
+        spec_scaled = F.conv2d(spec, self.K[:, None, :, :], padding="same")
+        spec_scaled = F.conv_transpose2d(spec_scaled, self.K[:, None, :, :].conj(), padding=padding)
 
         diff = spec - spec_scaled
         diff = diff.abs().square()
@@ -190,9 +196,9 @@ class SpectrogramBuilder(nn.Module):
         diff = diff.sqrt()
 
         # Convert coherent signal to noise, where noise is strong
-        mod = (diff.square() + spec_scaled.abs().square()).sqrt()
-        diff = (diff.square() + spec_scaled.abs().square() * (diff / mod).square()).sqrt()
-        spec_scaled = spec_scaled * (spec_scaled.abs() / mod)
+        # mod = (diff.square() + spec_scaled.abs().square()).sqrt().clip(1e-3, None)
+        # diff = (diff.square() + spec_scaled.abs().square() * (diff / mod).square()).sqrt()
+        # spec_scaled = spec_scaled * (spec_scaled.abs() / mod)
 
         spec = spec.reshape(spec_shape)
         spec_scaled = spec_scaled.reshape(spec_shape)
@@ -204,7 +210,8 @@ class SpectrogramBuilder(nn.Module):
         spec = self._encode_conv(signal)
         if self.magnitude:
             spec = spec.abs()
-        spec = self.to_freq_diff_repr(spec)
+        if not self.magnitude and self.freq_diff:
+            spec = self.to_freq_diff_repr(spec)
         
         spec = self.to_bel_scale(spec)
         # if snr:
@@ -235,7 +242,8 @@ class SpectrogramBuilder(nn.Module):
             spec = spec.clip(0, None)
 
         spec = self.from_bel_scale(spec)
-        spec = self.from_freq_diff_repr(spec)
+        if not self.magnitude and self.freq_diff:
+            spec = self.from_freq_diff_repr(spec)
         if self.magnitude:
             spec = self.reconstruct_phase(spec)
         
@@ -342,9 +350,9 @@ class SpectrogramBuilder(nn.Module):
         ampl = spectrum.abs()
 
         df = spectrum.angle() - (
-            0.5 * spectrum.roll(1, -1).roll(1, -2) + 
+            1.0 * spectrum.roll(1, -1).roll(1, -2) + 
             1.0 * spectrum.roll(1, -1).roll(0, -2) + 
-            0.5 * spectrum.roll(1, -1).roll(-1, -2)
+            1.0 * spectrum.roll(1, -1).roll(-1, -2)
         ).angle()
 
         # df = df.diff(1, -1, prepend=torch.zeros_like(df[..., :1]))
@@ -373,9 +381,9 @@ class SpectrogramBuilder(nn.Module):
         spec1 = (ampl * torch.exp(1j * df))[..., 0:1]
         for i in range(1, df.shape[-1]):
             dfi = df[..., i:i+1] + (
-                0.5 * spec1.roll(1, -2) +
+                1.0 * spec1.roll(1, -2) +
                 1.0 * spec1.roll(0, -2) +
-                0.5 * spec1.roll(-1, -2)
+                1.0 * spec1.roll(-1, -2)
             ).angle()
             spec1 = ampl[..., i:i+1] * torch.exp(1j * dfi)
             df1 = torch.concat([df1, dfi], dim=-1)

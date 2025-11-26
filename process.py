@@ -41,6 +41,21 @@ def complex_picture(spectrum: torch.Tensor, ampl_cap: Literal["max", "std", None
 
     return rgb_image
 
+def create_gaussian_kernel(kernel_size):
+    kernel_size = np.array(kernel_size)
+    sigma = kernel_size / 3
+    # Create a grid
+    k = kernel_size // 2
+    x = torch.linspace(-k[0], k[0], kernel_size[0])
+    y = torch.linspace(-k[1], k[1], kernel_size[0])
+    x, y = torch.meshgrid(x, y)
+    
+    # Compute the Gaussian kernel
+    gaussian = torch.exp(-((x**2 / (2.0 * sigma[0]**2) + y**2 / (2.0 * sigma[1]**2))))
+    gaussian /= gaussian.sum()
+    
+    return gaussian
+
 
 class SpectrogramBuilder(nn.Module):
     def __init__(self, 
@@ -74,7 +89,6 @@ class SpectrogramBuilder(nn.Module):
 
         self.fn = self.get_mel_scale()
         self.build_kernel()
-        self.K = None
 
     def build_kernel(self):
         fn = self.get_mel_scale()
@@ -163,48 +177,45 @@ class SpectrogramBuilder(nn.Module):
 
         return spec
     
-    def signal_noise_decomposition(self, spec: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def signal_noise_decomposition(self, spec: torch.Tensor, K=None, n_feats=None) -> Tuple[torch.Tensor, torch.Tensor]:
         spec_shape = spec.shape
         spec = spec.reshape(-1, 1, *spec_shape[-2:])
 
         ksize = (9, 9)
-        if True:#self.K is None:
+        if K is None:
             with torch.no_grad():
                 patches = torch.nn.functional.unfold(spec, ksize).transpose(0, 1).reshape(np.prod(ksize), -1)
                 patches -= patches.mean(-1, keepdim=True)
                 cov = patches @ patches.H / patches.shape[-1]
 
                 U, S, V = torch.linalg.svd(cov)
-                K = V[:12]
+                snr = 1
+                n_feats = (S.cumsum(-1) < snr * S.flip(-1).cumsum(-1).flip(-1)).sum()
+                # print(n_feats)
+                K = V
                 K = K.reshape(K.shape[0], *ksize)
+                K *= create_gaussian_kernel(ksize).to(K.device)
                 K = K / math.sqrt(np.prod(ksize))
-                self.K = K
-        
-        # f, ax = plt.subplots(1, self.K.shape[0], figsize=(15, 15))
-        # for i in range(self.K.shape[0]):
-        #     ax[i].imshow(complex_picture(self.K[i])[::-1], aspect=1, interpolation="nearest")
-        # plt.savefig("pca.png")
-        # plt.close()
 
         padding = ((ksize[0]-1)//2, (ksize[1]-1)//2)
-        spec_scaled = F.conv2d(spec, self.K[:, None, :, :], padding="same")
-        spec_scaled = F.conv_transpose2d(spec_scaled, self.K[:, None, :, :].conj(), padding=padding)
+        spec_scaled = F.conv2d(spec, K[:, None, :, :], padding="same")
+        noise = spec_scaled[:, n_feats:, :, :].abs().square().sum(1).sqrt()
+        spec_scaled = F.conv_transpose2d(spec_scaled[:, :n_feats], K[:n_feats, None, :, :].conj(), padding=padding)
 
-        diff = spec - spec_scaled
-        diff = diff.abs().square()
-        diff = torchvision.transforms.functional.gaussian_blur(diff, ksize)
-        diff = diff.sqrt()
 
-        # Convert coherent signal to noise, where noise is strong
-        # mod = (diff.square() + spec_scaled.abs().square()).sqrt().clip(1e-3, None)
-        # diff = (diff.square() + spec_scaled.abs().square() * (diff / mod).square()).sqrt()
-        # spec_scaled = spec_scaled * (spec_scaled.abs() / mod)
+        # plt.imshow(noise[0, :, :200].detach().cpu().numpy()[::-1])
+        # plt.savefig("noise.png")
+        # plt.close()
+
+        # plt.imshow(complex_picture(spec_scaled[0, 0, :, :200].detach().cpu())[::-1])
+        # plt.savefig("voice.png")
+        # plt.close()
 
         spec = spec.reshape(spec_shape)
         spec_scaled = spec_scaled.reshape(spec_shape)
-        diff = diff.reshape(spec_shape)
+        noise = noise.reshape(spec_shape)
 
-        return spec_scaled, diff
+        return spec_scaled, noise, K, n_feats
 
     def encode(self, signal: torch.Tensor, snr=False) -> torch.Tensor:
         spec = self._encode_conv(signal)

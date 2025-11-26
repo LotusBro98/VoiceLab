@@ -57,16 +57,22 @@ class ResBlock(nn.Module):
 
 
 class SpecUpsampler(nn.Module):
-    def __init__(self, d_model=64):
+    def __init__(self, d_model=64, n_hid_layers=2):
         super().__init__()
 
         self.upsample = nn.Upsample(scale_factor=2)
 
         self.layers = nn.ModuleList([
-            ResBlock(1, d_model),
-            ResBlock(d_model, d_model),
-            ResBlock(d_model, d_model),
-            ResBlock(d_model, 2),
+            # ResBlock(1, d_model),
+            nn.Conv2d(1, d_model, kernel_size=5, padding="same"),
+            # nn.BatchNorm2d(d_model),
+            # nn.ReLU(),
+            *(
+                ResBlock(d_model, d_model)
+                for i in range(n_hid_layers)
+            ),
+            # ResBlock(d_model, 2),
+            nn.Conv2d(d_model, 2, kernel_size=5, padding="same"),
         ])
 
         self.basic_phase_k = nn.Parameter(torch.ones(160))
@@ -89,7 +95,7 @@ class SpecUpsampler(nn.Module):
         return spec
 
 
-def complex_mse_loss(pred, true, normalize=True, eps=1e-8):
+def complex_mse_loss(pred, true, normalize=True, eps=1e-3):
     loss = (pred - true).abs().square().mean().sqrt()
     if normalize:
         loss = loss / true.std().clip(eps, None)
@@ -131,8 +137,8 @@ class UpsamplerTrainable(pl.LightningModule):
 
         spec_pred = self.model(spec_encode)
 
-        signal_true, noise_true = self.builder_decode.signal_noise_decomposition(spec_decode)
-        signal_pred, noise_pred = self.builder_decode.signal_noise_decomposition(spec_pred)
+        signal_true, noise_true, K, nf = self.builder_decode.signal_noise_decomposition(spec_decode)
+        signal_pred, noise_pred, K, nf = self.builder_decode.signal_noise_decomposition(spec_pred, K=K, n_feats=nf)
 
         loss_ae = complex_mse_loss(signal_pred, signal_true)
         loss_ae += complex_mse_loss(noise_pred, noise_true)

@@ -35,7 +35,7 @@ codec = UpsamplerTrainable()
 codec.model.load_state_dict(torch.load("upsampler.pth"))
 codec.model.eval()
 
-spec = codec.encode(torch.tensor(track, device="cuda"))
+spec = codec.encode(track)
 track2 = codec.decode(spec)
 spec2 = codec.encode(track2)
 

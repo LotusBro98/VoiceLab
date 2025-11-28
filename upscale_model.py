@@ -127,11 +127,15 @@ class UpsamplerTrainable(pl.LightningModule):
 
     @torch.no_grad
     def encode(self, signal):
+        if not isinstance(signal, torch.Tensor):
+            signal = torch.tensor(signal, device=self.model.basic_phase_k.device)
         spec = self.builder_encode.encode(signal)
         return spec
     
     @torch.no_grad
     def decode(self, spec):
+        if not isinstance(spec, torch.Tensor):
+            spec = torch.tensor(spec, device=self.model.basic_phase_k.device)
         spec_pred = self.model(spec)
         signal = self.builder_decode.decode(spec_pred)
         return signal

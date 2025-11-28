@@ -63,10 +63,16 @@ class Encoder(nn.Module):
         super().__init__()
 
         self.layers = nn.ModuleList([
-            ResBlock(d_spec, d_model),
-            ResBlock(d_model, d_model, stride=2),
-            ResBlock(d_model, d_model, stride=2),
-            ResBlock(d_model, d_emb),
+            # ResBlock(d_spec, 128, stride=2),
+            nn.Conv1d(d_spec, 128, 1),
+            ResBlock(128, 128),
+            ResBlock(128, 128),
+            ResBlock(128, 256, stride=2),
+            ResBlock(256, 256),
+            ResBlock(256, 256),
+            ResBlock(256, 512, stride=2),
+            ResBlock(512, 512),
+            ResBlock(512, d_emb),
         ])
 
     def forward(self, spec: torch.Tensor):
@@ -82,12 +88,17 @@ class Decoder(nn.Module):
         super().__init__()
 
         self.layers = nn.ModuleList([
-            ResBlock(d_emb, d_model),
+            ResBlock(d_emb, 512),
+            ResBlock(512, 512),
             nn.Upsample(scale_factor=2),
-            ResBlock(d_model, d_model),
+            ResBlock(512, 256),
+            ResBlock(256, 256),
+            ResBlock(256, 256),
             nn.Upsample(scale_factor=2),
-            ResBlock(d_model, d_model),
-            ResBlock(d_model, d_spec),
+            ResBlock(256, 128),
+            ResBlock(128, 128),
+            ResBlock(128, 128),
+            nn.Conv1d(128, d_spec, 1),
         ])
 
     def forward(self, emb: torch.Tensor):
@@ -170,7 +181,7 @@ def main():
     torch.set_float32_matmul_precision('medium')
     trainer = pl.Trainer(
         # limit_train_batches=10000, 
-        max_epochs=5,
+        max_epochs=50,
         # accelerator="cpu"
         devices=[1],
         # callbacks=[

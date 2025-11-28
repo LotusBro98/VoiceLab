@@ -40,9 +40,9 @@ track2 = codec.decode(spec)
 spec2 = codec.encode(track2)
 
 f, ax = plt.subplots(3, figsize=(15, 10))
-ax[0].imshow(complex_picture(spec)[::-1], aspect=1, interpolation="nearest")
-ax[1].imshow(complex_picture(spec2)[::-1], aspect=1, interpolation="nearest")
-ax[2].imshow(complex_picture(spec2 - spec)[::-1], aspect=1, interpolation="nearest")
+ax[0].imshow(spec.cpu().numpy()[::-1], aspect=1, interpolation="nearest")
+ax[1].imshow(spec2.cpu().numpy()[::-1], aspect=1, interpolation="nearest")
+ax[2].imshow((spec2 - spec).cpu().numpy()[::-1], aspect=1, interpolation="nearest")
 plt.savefig("complex_pic.png")
 plt.close()
 

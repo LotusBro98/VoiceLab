@@ -125,6 +125,17 @@ class UpsamplerTrainable(pl.LightningModule):
 
         self.model = SpecUpsampler().to("cuda")
 
+    @torch.no_grad
+    def encode(self, signal):
+        spec = self.builder_encode.encode(signal)
+        return spec
+    
+    @torch.no_grad
+    def decode(self, spec):
+        spec_pred = self.model(spec)
+        signal = self.builder_decode.decode(spec_pred)
+        return signal
+
     def training_step(self, batch: torch.Tensor, batch_idx):
         chunk, sr = batch
 
@@ -197,7 +208,7 @@ def main():
     )
 
     trainer.fit(model=model, train_dataloaders=train_loader)
-
+    torch.save(model.model.state_dict(), "upsampler.pth")
     model.to("cuda:1").eval()
 
     ### Test

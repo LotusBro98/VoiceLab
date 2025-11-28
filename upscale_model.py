@@ -57,22 +57,18 @@ class ResBlock(nn.Module):
 
 
 class SpecUpsampler(nn.Module):
-    def __init__(self, d_model=64, n_hid_layers=2):
+    def __init__(self, d_model=128, n_hid_layers=2):
         super().__init__()
 
         self.upsample = nn.Upsample(scale_factor=2)
 
         self.layers = nn.ModuleList([
-            # ResBlock(1, d_model),
-            nn.Conv2d(1, d_model, kernel_size=5, padding="same"),
-            # nn.BatchNorm2d(d_model),
-            # nn.ReLU(),
+            nn.Conv2d(1, d_model, kernel_size=3, padding="same"),
             *(
                 ResBlock(d_model, d_model)
                 for i in range(n_hid_layers)
             ),
-            # ResBlock(d_model, 2),
-            nn.Conv2d(d_model, 2, kernel_size=5, padding="same"),
+            nn.Conv2d(d_model, 2, kernel_size=3, padding="same"),
         ])
 
         self.basic_phase_k = nn.Parameter(torch.ones(160))
